@@ -60,11 +60,30 @@ class _HomePageState extends State<HomePage> {
           }
 
           final channels = snapshot.data!;
-          return ListView.separated(
-            padding: const EdgeInsets.all(20.0),
+
+          // --- GridView 修改部分 ---
+          return GridView.builder(
+            padding: const EdgeInsets.all(30.0), // 整体内边距
+
+            // 1. 移除了 scrollDirection: Axis.horizontal，使其恢复为默认的竖向滚动
+
+            // 2. 重新配置 gridDelegate 适应竖向滚动
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              // 每个 item 的最大宽度。GridView 会根据屏幕宽度和这个值来决定一行放几列
+              maxCrossAxisExtent: 220,
+
+              mainAxisSpacing: 30.0,   // 主轴（竖直）方向的间距
+              crossAxisSpacing: 30.0,  // 交叉轴（水平）方向的间距
+
+              // 宽高比。根据 ChannelListItem 的尺寸 (width: 200, height: 160)
+              // 比例是 200 / 160 = 1.25。可以微调以达到最佳视觉效果。
+              childAspectRatio: 1.25,
+            ),
+
             itemCount: channels.length,
             itemBuilder: (context, index) {
               final channel = channels[index];
+              // ChannelListItem 不需要修改，它已经是一个独立的卡片组件
               return ChannelListItem(
                 channel: channel,
                 onTap: () {
@@ -77,8 +96,8 @@ class _HomePageState extends State<HomePage> {
                 },
               );
             },
-            separatorBuilder: (context, index) => const SizedBox(height: 12),
           );
+          // --- GridView 修改结束 ---
         },
       ),
     );

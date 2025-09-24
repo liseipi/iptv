@@ -21,60 +21,83 @@ class _ChannelListItemState extends State<ChannelListItem> {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: widget.onTap,
-      onFocusChange: (hasFocus) {
-        setState(() {
-          _isFocused = hasFocus;
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.all(12.0),
-        decoration: BoxDecoration(
-          color: _isFocused ? Colors.orange.withOpacity(0.3) : Colors.transparent,
-          border: Border.all(
-            color: _isFocused ? Colors.orange : Colors.grey.shade800,
-            width: _isFocused ? 3.0 : 1.0,
+    // 增加一个 AnimatedContainer 实现焦点变化的平滑缩放效果
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      transform: Matrix4.identity()..scale(_isFocused ? 1.1 : 1.0),
+      transformAlignment: Alignment.center,
+      child: InkWell(
+        onTap: widget.onTap,
+        onFocusChange: (hasFocus) {
+          setState(() {
+            _isFocused = hasFocus;
+          });
+        },
+        child: Container(
+          width: 200, // 给卡片一个固定的宽度
+          height: 160, // 给卡片一个固定的高度
+          decoration: BoxDecoration(
+            color: Colors.grey.shade900,
+            border: Border.all(
+              color: _isFocused ? Colors.orange : Colors.transparent,
+              width: 4.0,
+            ),
+            borderRadius: BorderRadius.circular(8.0),
+            boxShadow: _isFocused
+                ? [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.5),
+                blurRadius: 10,
+                offset: const Offset(0, 5),
+              )
+            ]
+                : [],
           ),
-          borderRadius: BorderRadius.circular(8.0),
-        ),
-        child: Row(
-          children: [
-            widget.channel.logoUrl.isNotEmpty
-                ? Image.network(
-              widget.channel.logoUrl,
-              width: 60,
-              height: 40,
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) =>
-              const Icon(Icons.tv, size: 40, color: Colors.white),
-            )
-                : const Icon(Icons.tv, size: 40, color: Colors.white),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 频道 Logo 作为卡片顶部图片
+              Expanded(
+                flex: 2,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(4.0),
+                      topRight: Radius.circular(4.0),
+                    ),
+                    color: Colors.black.withOpacity(0.3),
+                  ),
+                  child: widget.channel.logoUrl.isNotEmpty
+                      ? Image.network(
+                    widget.channel.logoUrl,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) =>
+                    const Icon(Icons.tv, size: 40, color: Colors.white70),
+                  )
+                      : const Icon(Icons.tv, size: 40, color: Colors.white70),
+                ),
+              ),
+              // 频道名称放在卡片底部
+              Expanded(
+                flex: 1,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  alignment: Alignment.center,
+                  child: Text(
                     widget.channel.name,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 18,
+                      fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),
+                    textAlign: TextAlign.center,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  if (widget.channel.groupTitle.isNotEmpty)
-                    Text(
-                      widget.channel.groupTitle,
-                      style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
-                    ),
-                ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
