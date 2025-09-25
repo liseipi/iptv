@@ -51,6 +51,9 @@ class _HomePageState extends State<HomePage> {
   final FocusScopeNode _categoryPaneFocusScope = FocusScopeNode();
   final FocusScopeNode _channelPaneFocusScope = FocusScopeNode();
 
+  final ScrollController _categoryScrollController = ScrollController();
+  final ScrollController _channelScrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -93,6 +96,13 @@ class _HomePageState extends State<HomePage> {
       // 切换分类时，默认让新分类的第一个频道成为焦点
       _focusedChannel = _groupedChannels[category]?.first;
     });
+
+    // 使用 Future.delayed 确保在下一帧渲染时执行，此时 ListView 已经更新
+    Future.delayed(Duration.zero, () {
+      if (_channelScrollController.hasClients) {
+        _channelScrollController.jumpTo(0.0);
+      }
+    });
   }
 
   void _onChannelSubmitted(Channel channel) {
@@ -106,6 +116,8 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _categoryPaneFocusScope.dispose();
     _channelPaneFocusScope.dispose();
+    _categoryScrollController.dispose();
+    _channelScrollController.dispose();
     super.dispose();
   }
 
@@ -147,6 +159,7 @@ class _HomePageState extends State<HomePage> {
                 Expanded(
                   flex: 2,
                   child: CategoryPane(
+                    scrollController: _categoryScrollController,
                     focusScopeNode: _categoryPaneFocusScope,
                     categories: _categories,
                     selectedCategory: _selectedCategory!,
@@ -157,6 +170,8 @@ class _HomePageState extends State<HomePage> {
                 Expanded(
                   flex: 3,
                   child: ChannelPane(
+                    key: ValueKey(_selectedCategory),
+                    scrollController: _channelScrollController,
                     focusScopeNode: _channelPaneFocusScope,
                     // 关键: 只传入当前选中分类的频道列表
                     channels: _groupedChannels[_selectedCategory] ?? [],

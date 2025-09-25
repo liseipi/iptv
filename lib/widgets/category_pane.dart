@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 class CategoryPane extends StatelessWidget {
   final FocusScopeNode focusScopeNode;
+  final ScrollController scrollController;
   final List<String> categories;
   final String selectedCategory;
   final ValueChanged<String> onCategorySelected;
@@ -10,6 +11,7 @@ class CategoryPane extends StatelessWidget {
   const CategoryPane({
     super.key,
     required this.focusScopeNode,
+    required this.scrollController,
     required this.categories,
     required this.selectedCategory,
     required this.onCategorySelected,
@@ -22,6 +24,7 @@ class CategoryPane extends StatelessWidget {
       child: Container(
         color: Colors.black.withOpacity(0.5),
         child: ListView.builder(
+          controller: scrollController,
           itemCount: categories.length,
           itemBuilder: (context, index) {
             final category = categories[index];
@@ -67,6 +70,12 @@ class _CategoryListItemState extends State<CategoryListItem> {
           // 当获得焦点时，也触发选中
           if (hasFocus) {
             widget.onTap();
+            Scrollable.ensureVisible(
+              context,
+              alignment: 0.5,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
           }
         });
       },

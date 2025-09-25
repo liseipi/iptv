@@ -4,6 +4,7 @@ import '../models/channel.dart';
 
 class ChannelPane extends StatelessWidget {
   final FocusScopeNode focusScopeNode;
+  final ScrollController scrollController;
   final List<Channel> channels;
   final ValueChanged<Channel> onChannelFocused;
   final ValueChanged<Channel> onChannelSubmitted;
@@ -11,6 +12,7 @@ class ChannelPane extends StatelessWidget {
   const ChannelPane({
     super.key,
     required this.focusScopeNode,
+    required this.scrollController,
     required this.channels,
     required this.onChannelFocused,
     required this.onChannelSubmitted,
@@ -24,6 +26,7 @@ class ChannelPane extends StatelessWidget {
       child: Container(
         color: Colors.black.withOpacity(0.3),
         child: ListView.builder(
+          controller: scrollController,
           itemCount: channels.length,
           itemBuilder: (context, index) {
             final channel = channels[index];
@@ -70,6 +73,12 @@ class _ChannelListItemState extends State<ChannelListItem> {
           _isFocused = hasFocus;
           if (hasFocus) {
             widget.onFocus();
+            Scrollable.ensureVisible(
+              context,
+              alignment: 0.5, // 0.5 表示滚动到中心
+              duration: const Duration(milliseconds: 300), // 平滑滚动的动画时长
+              curve: Curves.easeInOut, // 动画曲线
+            );
           }
         });
       },
