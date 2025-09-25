@@ -1,10 +1,13 @@
 // lib/main.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'models/channel.dart';
 import 'screens/player_page.dart';
 import 'services/iptv_service.dart';
-import 'widgets/channel_list_item.dart';
-import 'widgets/channel_group_row.dart';
+import 'widgets/category_pane.dart';
+import 'widgets/channel_pane.dart';
+import 'widgets/preview_pane.dart';
 
 void main() {
   runApp(const MyApp());
@@ -18,10 +21,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Flutter IPTV Player',
       debugShowCheckedModeBanner: false,
-      debugShowMaterialGrid: false,
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        brightness: Brightness.dark, // 使用深色主题更适合电视
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: Colors.black,
       ),
       home: const HomePage(),
     );
@@ -35,134 +37,145 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-// 竖向排列
-// class _HomePageState extends State<HomePage> {
-//   late Future<List<Channel>> _channelsFuture;
-//
-//   @override
-//   void initState() {
-//     super.initState();
-//     _channelsFuture = IptvService.fetchAndParseM3u();
-//   }
-//
-//   @override
-//   Widget build(BuildContext context) {
-//     return Scaffold(
-//       appBar: AppBar(
-//         title: const Text('IPTV 频道列表'),
-//         backgroundColor: Colors.black.withOpacity(0.5),
-//       ),
-//       body: FutureBuilder<List<Channel>>(
-//         future: _channelsFuture,
-//         builder: (context, snapshot) {
-//           if (snapshot.connectionState == ConnectionState.waiting) {
-//             return const Center(child: CircularProgressIndicator());
-//           } else if (snapshot.hasError) {
-//             return Center(child: Text('加载失败: ${snapshot.error}'));
-//           } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-//             return const Center(child: Text('没有找到频道'));
-//           }
-//
-//           final channels = snapshot.data!;
-//
-//           // --- GridView 修改部分 ---
-//           return GridView.builder(
-//             padding: const EdgeInsets.all(30.0), // 整体内边距
-//
-//             // 1. 移除了 scrollDirection: Axis.horizontal，使其恢复为默认的竖向滚动
-//
-//             // 2. 重新配置 gridDelegate 适应竖向滚动
-//             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-//               // 每个 item 的最大宽度。GridView 会根据屏幕宽度和这个值来决定一行放几列
-//               maxCrossAxisExtent: 220,
-//
-//               mainAxisSpacing: 30.0,   // 主轴（竖直）方向的间距
-//               crossAxisSpacing: 30.0,  // 交叉轴（水平）方向的间距
-//
-//               // 宽高比。根据 ChannelListItem 的尺寸 (width: 200, height: 160)
-//               // 比例是 200 / 160 = 1.25。可以微调以达到最佳视觉效果。
-//               childAspectRatio: 1.25,
-//             ),
-//
-//             itemCount: channels.length,
-//             itemBuilder: (context, index) {
-//               final channel = channels[index];
-//               // ChannelListItem 不需要修改，它已经是一个独立的卡片组件
-//               return ChannelListItem(
-//                 channel: channel,
-//                 onTap: () {
-//                   Navigator.push(
-//                     context,
-//                     MaterialPageRoute(
-//                       builder: (context) => PlayerPage(channel: channel),
-//                     ),
-//                   );
-//                 },
-//               );
-//             },
-//           );
-//           // --- GridView 修改结束 ---
-//         },
-//       ),
-//     );
-//   }
-// }
-
-//分组排列
 class _HomePageState extends State<HomePage> {
-  // Future 的类型现在是 Map
-  late Future<Map<String, List<Channel>>> _groupedChannelsFuture;
+  // --- State Management ---
+  Map<String, List<Channel>> _groupedChannels = {};
+  List<String> _categories = [];
+
+  String? _selectedCategory;
+  Channel? _focusedChannel;
+
+  bool _isLoading = true;
+
+  // --- Focus Management ---
+  final FocusScopeNode _categoryPaneFocusScope = FocusScopeNode();
+  final FocusScopeNode _channelPaneFocusScope = FocusScopeNode();
 
   @override
   void initState() {
     super.initState();
-    // 调用新的服务方法
-    _groupedChannelsFuture = IptvService.fetchAndGroupChannels();
+    _loadChannels();
   }
 
-  void _onChannelTap(Channel channel) {
+  Future<void> _loadChannels() async {
+    try {
+      final data = await IptvService.fetchAndGroupChannels();
+      setState(() {
+        _groupedChannels = data;
+        _categories = data.keys.toList();
+        // 默认选中第一个分类，并让第一个分类的第一个频道成为初始焦点
+        if (_categories.isNotEmpty) {
+          _selectedCategory = _categories.first;
+          _focusedChannel = _groupedChannels[_selectedCategory]?.first;
+        }
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      print("Error loading channels: $e");
+    }
+  }
+
+  // 当在中栏的频道焦点变化时，由 ChannelPane 调用
+  void _onChannelFocused(Channel channel) {
+    // 使用 setState 更新焦点频道，从而触发 PreviewPane 的重建
+    setState(() {
+      _focusedChannel = channel;
+    });
+  }
+
+  // 当在左栏选择新的分类时，由 CategoryPane 调用
+  void _onCategorySelected(String category) {
+    setState(() {
+      _selectedCategory = category;
+      // 切换分类时，默认让新分类的第一个频道成为焦点
+      _focusedChannel = _groupedChannels[category]?.first;
+    });
+  }
+
+  void _onChannelSubmitted(Channel channel) {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => PlayerPage(channel: channel),
-      ),
+      MaterialPageRoute(builder: (context) => PlayerPage(channel: channel)),
     );
   }
 
   @override
+  void dispose() {
+    _categoryPaneFocusScope.dispose();
+    _channelPaneFocusScope.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('IPTV 频道'),
-      ),
-      body: FutureBuilder<Map<String, List<Channel>>>(
-        future: _groupedChannelsFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          } else if (snapshot.hasError) {
-            return Center(child: Text('加载失败: ${snapshot.error}'));
-          } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('没有找到频道'));
+    if (_isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_categories.isEmpty) {
+      return const Scaffold(body: Center(child: Text("没有加载到频道数据")));
+    }
+
+    // 使用 RawKeyboardListener 监听全局按键，实现左右栏焦点跳转
+    return RawKeyboardListener(
+      focusNode: FocusNode(), // 必须有一个根 FocusNode
+      onKey: (RawKeyEvent event) {
+        if (event is RawKeyDownEvent) {
+          // 在左栏按右键 -> 焦点跳到中栏
+          if (event.logicalKey == LogicalKeyboardKey.arrowRight && _categoryPaneFocusScope.hasFocus) {
+            _channelPaneFocusScope.requestFocus();
           }
-
-          final groupedChannels = snapshot.data!;
-          final groups = groupedChannels.keys.toList();
-
-          // 使用一个垂直的 ListView 来展示每个分组行
-          return ListView.builder(
-            itemCount: groups.length,
-            itemBuilder: (context, index) {
-              final groupTitle = groups[index];
-              final channelsInGroup = groupedChannels[groupTitle]!;
-              return ChannelGroupRow(
-                title: groupTitle,
-                channels: channelsInGroup,
-                onChannelTap: _onChannelTap,
-              );
-            },
-          );
-        },
+          // 在中栏按左键 -> 焦点跳回左栏
+          else if (event.logicalKey == LogicalKeyboardKey.arrowLeft && _channelPaneFocusScope.hasFocus) {
+            _categoryPaneFocusScope.requestFocus();
+          }
+        }
+      },
+      child: Scaffold(
+        body: Stack(
+          children: [
+            // 背景图
+            Positioned.fill(
+              child: Image.asset('assets/background.jpg', fit: BoxFit.cover), // 记得在项目里添加这张图
+            ),
+            // 主内容
+            Row(
+              children: [
+                // --- 左栏: 分类 ---
+                Expanded(
+                  flex: 2,
+                  child: CategoryPane(
+                    focusScopeNode: _categoryPaneFocusScope,
+                    categories: _categories,
+                    selectedCategory: _selectedCategory!,
+                    onCategorySelected: _onCategorySelected,
+                  ),
+                ),
+                // --- 中栏: 频道 ---
+                Expanded(
+                  flex: 3,
+                  child: ChannelPane(
+                    focusScopeNode: _channelPaneFocusScope,
+                    // 关键: 只传入当前选中分类的频道列表
+                    channels: _groupedChannels[_selectedCategory] ?? [],
+                    onChannelFocused: _onChannelFocused,
+                    onChannelSubmitted: _onChannelSubmitted,
+                  ),
+                ),
+                // --- 右栏: 预览 ---
+                Expanded(
+                  flex: 5,
+                  child: PreviewPane(
+                    // 关键: 传入当前获得焦点的频道
+                    channel: _focusedChannel,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
