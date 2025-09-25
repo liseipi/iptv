@@ -30,6 +30,15 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            keyAlias = "iptv-alias"
+            keyPassword = "iptv888"
+            storeFile = file("iptv-release-key.jks")
+            storePassword = "iptv888"
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
