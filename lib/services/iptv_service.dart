@@ -5,7 +5,9 @@ import '../models/channel.dart';
 
 class IptvService {
   // static const String m3uUrl = 'https://iptv-org.github.io/iptv/index.m3u';
-  static const String m3uUrl = 'https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8';
+  // static const String m3uUrl = 'https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8';
+  // static const String m3uUrl = 'https://liseipi.github.io/cdn/TV-IPV4.m3u';
+  static const String m3uUrl = 'https://gh-proxy.com/raw.githubusercontent.com/vbskycn/iptv/refs/heads/master/tv/iptv4.m3u';
 
   static Future<List<Channel>> fetchAndParseM3u() async {
     try {
@@ -21,6 +23,23 @@ class IptvService {
     } catch (e) {
       throw Exception('Error fetching M3U: $e');
     }
+  }
+
+  // 返回分组后的 Map
+  static Future<Map<String, List<Channel>>> fetchAndGroupChannels() async {
+    final channels = await fetchAndParseM3u(); // 调用我们之前的方法
+    final Map<String, List<Channel>> groupedChannels = {};
+
+    for (var channel in channels) {
+      // 如果 groupTitle 为空，则放入 "未分类" 组
+      final group = channel.groupTitle.isNotEmpty ? channel.groupTitle : '未分类';
+      if (groupedChannels.containsKey(group)) {
+        groupedChannels[group]!.add(channel);
+      } else {
+        groupedChannels[group] = [channel];
+      }
+    }
+    return groupedChannels;
   }
 
   static List<Channel> _parseM3u(String content) {
