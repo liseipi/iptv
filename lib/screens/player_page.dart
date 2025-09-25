@@ -67,35 +67,32 @@ class _PlayerPageState extends State<PlayerPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Colors.black, // 黑色背景将自动成为“黑边”
       body: GestureDetector(
         onTap: _togglePlayPause,
-        child: Center(
+        child: Center( // Center Widget 会将视频居中
           child: _isLoading
               ? const CircularProgressIndicator()
               : _controller.value.isInitialized
-              ? Stack(
-            fit: StackFit.expand,
-            alignment: Alignment.center,
-            children: [
-              SizedBox.expand(
-                child: FittedBox(
-                  fit: BoxFit.cover,
-                  child: SizedBox(
-                    width: _controller.value.size.width,
-                    height: _controller.value.size.height,
-                    child: VideoPlayer(_controller),
+          // --- 这里是核心改动：恢复使用 AspectRatio ---
+              ? AspectRatio(
+            // 关键：使用视频控制器提供的实际宽高比
+            aspectRatio: _controller.value.aspectRatio,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                VideoPlayer(_controller),
+                // 播放/暂停的图标指示器 (保持不变)
+                if (!_controller.value.isPlaying && !_isLoading)
+                  Icon(
+                    Icons.play_arrow,
+                    color: Colors.white.withOpacity(0.7),
+                    size: 80,
                   ),
-                ),
-              ),
-              if (!_controller.value.isPlaying && !_isLoading)
-                Icon(
-                  Icons.play_arrow,
-                  color: Colors.white.withOpacity(0.7),
-                  size: 80,
-                ),
-            ],
+              ],
+            ),
           )
+          // --- 核心改动结束 ---
               : Padding(
             padding: const EdgeInsets.all(20.0),
             child: Column(

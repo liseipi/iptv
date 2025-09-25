@@ -4,7 +4,8 @@ import 'package:http/http.dart' as http;
 import '../models/channel.dart';
 
 class IptvService {
-  static const String m3uUrl = 'https://iptv-org.github.io/iptv/index.m3u';
+  // static const String m3uUrl = 'https://iptv-org.github.io/iptv/index.m3u';
+  static const String m3uUrl = 'https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8';
 
   static Future<List<Channel>> fetchAndParseM3u() async {
     try {
