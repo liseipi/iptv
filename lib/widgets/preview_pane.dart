@@ -83,53 +83,55 @@ class _PreviewPaneState extends State<PreviewPane> {
     return Container(
       padding: const EdgeInsets.all(40),
       alignment: Alignment.center,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 视频预览窗口
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.black,
-                border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
-              ),
-              child: _controller != null && _controller!.value.isInitialized
-                  ? VideoPlayer(_controller!)
-                  : Center(
-                child: _currentChannel != null
-                    ? const CircularProgressIndicator()
-                    : const Text("无预览", style: TextStyle(color: Colors.white)),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 视频预览窗口
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
+                ),
+                child: _controller != null && _controller!.value.isInitialized
+                    ? VideoPlayer(_controller!)
+                    : Center(
+                  child: _currentChannel != null
+                      ? const CircularProgressIndicator()
+                      : const Text("无预览", style: TextStyle(color: Colors.white)),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 20),
-          // 节目信息
-          if (_currentChannel != null)
+            const SizedBox(height: 20),
+            // 节目信息
+            if (_currentChannel != null)
+              Text(
+                _currentChannel!.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            const SizedBox(height: 10),
             Text(
-              _currentChannel!.name,
+              // 这里的节目信息是写死的，真实场景需要从 EPG 数据源获取
+              "正在播放: 精彩节目",
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(color: Colors.grey.shade300, fontSize: 18),
             ),
-          const SizedBox(height: 10),
-          Text(
-            // 这里的节目信息是写死的，真实场景需要从 EPG 数据源获取
-            "正在播放: 精彩节目",
-            maxLines: 1,
-            style: TextStyle(color: Colors.grey.shade300, fontSize: 18),
-          ),
-          Text(
-            "稍后播放: 更多精彩",
-            maxLines: 1,
-            style: TextStyle(color: Colors.grey.shade400, fontSize: 16),
-          ),
-        ],
+            Text(
+              "稍后播放: 更多精彩",
+              maxLines: 1,
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 16),
+            ),
+          ],
+        ),
       ),
     );
   }
