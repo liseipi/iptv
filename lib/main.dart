@@ -46,6 +46,7 @@ class _HomePageState extends State<HomePage> {
   Channel? _focusedChannel;
 
   bool _isLoading = true;
+  String? _errorMessage;
 
   // --- Focus Management ---
   final FocusScopeNode _categoryPaneFocusScope = FocusScopeNode();
@@ -63,6 +64,8 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loadChannels() async {
     try {
       final data = await IptvService.fetchAndGroupChannels();
+      if (!mounted) return;
+
       setState(() {
         _groupedChannels = data;
         _categories = data.keys.toList();
@@ -72,12 +75,32 @@ class _HomePageState extends State<HomePage> {
           _focusedChannel = _groupedChannels[_selectedCategory]?.first;
         }
         _isLoading = false;
+        _errorMessage = null;
       });
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         _isLoading = false;
+        _errorMessage = e.toString();
       });
+      _showError('加载频道失败: $e');
       print("Error loading channels: $e");
+    }
+  }
+
+  void _showError(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: '重试',
+            onPressed: _loadChannels,
+          ),
+        ),
+      );
     }
   }
 
@@ -124,74 +147,131 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    if (_categories.isEmpty) {
-      return const Scaffold(body: Center(child: Text("没有加载到频道数据")));
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('正在加载频道列表...'),
+            ],
+          ),
+        ),
+      );
     }
 
-    // 使用 RawKeyboardListener 监听全局按键，实现左右栏焦点跳转
-    return RawKeyboardListener(
-      focusNode: FocusNode(), // 必须有一个根 FocusNode
-      onKey: (RawKeyEvent event) {
-        if (event is RawKeyDownEvent) {
-          // 在左栏按右键 -> 焦点跳到中栏
-          if (event.logicalKey == LogicalKeyboardKey.arrowRight && _categoryPaneFocusScope.hasFocus) {
-            _channelPaneFocusScope.requestFocus();
-          }
-          // 在中栏按左键 -> 焦点跳回左栏
-          else if (event.logicalKey == LogicalKeyboardKey.arrowLeft && _channelPaneFocusScope.hasFocus) {
-            _categoryPaneFocusScope.requestFocus();
-          }
-        }
+    if (_categories.isEmpty) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              Text(_errorMessage ?? "没有加载到频道数据"),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _loadChannels,
+                child: const Text('重试'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 使用 Shortcuts 和 Actions 替代 RawKeyboardListener
+    return Shortcuts(
+      shortcuts: <LogicalKeySet, Intent>{
+        LogicalKeySet(LogicalKeyboardKey.arrowRight): const _MoveToChannelsIntent(),
+        LogicalKeySet(LogicalKeyboardKey.arrowLeft): const _MoveToCategoriesIntent(),
       },
-      child: Scaffold(
-        body: Stack(
-          children: [
-            // 背景图
-            Positioned.fill(
-              child: Image.asset('assets/background.jpg', fit: BoxFit.cover), // 记得在项目里添加这张图
-            ),
-            // 主内容
-            Row(
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          _MoveToChannelsIntent: CallbackAction<_MoveToChannelsIntent>(
+            onInvoke: (_) {
+              if (_categoryPaneFocusScope.hasFocus) {
+                _channelPaneFocusScope.requestFocus();
+              }
+              return null;
+            },
+          ),
+          _MoveToCategoriesIntent: CallbackAction<_MoveToCategoriesIntent>(
+            onInvoke: (_) {
+              if (_channelPaneFocusScope.hasFocus) {
+                _categoryPaneFocusScope.requestFocus();
+              }
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            body: Stack(
               children: [
-                // --- 左栏: 分类 ---
-                Expanded(
-                  flex: 2,
-                  child: CategoryPane(
-                    scrollController: _categoryScrollController,
-                    focusScopeNode: _categoryPaneFocusScope,
-                    categories: _categories,
-                    selectedCategory: _selectedCategory!,
-                    onCategorySelected: _onCategorySelected,
+                // 背景图
+                Positioned.fill(
+                  child: Image.asset(
+                    'assets/background.jpg',
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(color: Colors.black);
+                    },
                   ),
                 ),
-                // --- 中栏: 频道 ---
-                Expanded(
-                  flex: 3,
-                  child: ChannelPane(
-                    key: ValueKey(_selectedCategory),
-                    scrollController: _channelScrollController,
-                    focusScopeNode: _channelPaneFocusScope,
-                    // 关键: 只传入当前选中分类的频道列表
-                    channels: _groupedChannels[_selectedCategory] ?? [],
-                    onChannelFocused: _onChannelFocused,
-                    onChannelSubmitted: _onChannelSubmitted,
-                  ),
-                ),
-                // --- 右栏: 预览 ---
-                Expanded(
-                  flex: 5,
-                  child: PreviewPane(
-                    // 关键: 传入当前获得焦点的频道
-                    channel: _focusedChannel,
-                  ),
+                // 主内容
+                Row(
+                  children: [
+                    // --- 左栏: 分类 ---
+                    Expanded(
+                      flex: 2,
+                      child: CategoryPane(
+                        scrollController: _categoryScrollController,
+                        focusScopeNode: _categoryPaneFocusScope,
+                        categories: _categories,
+                        selectedCategory: _selectedCategory!,
+                        onCategorySelected: _onCategorySelected,
+                      ),
+                    ),
+                    // --- 中栏: 频道 ---
+                    Expanded(
+                      flex: 3,
+                      child: ChannelPane(
+                        key: ValueKey(_selectedCategory),
+                        scrollController: _channelScrollController,
+                        focusScopeNode: _channelPaneFocusScope,
+                        // 关键: 只传入当前选中分类的频道列表
+                        channels: _groupedChannels[_selectedCategory] ?? [],
+                        onChannelFocused: _onChannelFocused,
+                        onChannelSubmitted: _onChannelSubmitted,
+                      ),
+                    ),
+                    // --- 右栏: 预览 ---
+                    Expanded(
+                      flex: 5,
+                      child: PreviewPane(
+                        // 关键: 传入当前获得焦点的频道
+                        channel: _focusedChannel,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
+          ),
         ),
       ),
     );
   }
+}
+
+// Intent 类定义
+class _MoveToChannelsIntent extends Intent {
+  const _MoveToChannelsIntent();
+}
+
+class _MoveToCategoriesIntent extends Intent {
+  const _MoveToCategoriesIntent();
 }

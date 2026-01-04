@@ -22,19 +22,61 @@ class CategoryPane extends StatelessWidget {
     return FocusScope(
       node: focusScopeNode,
       child: Container(
-        color: Colors.black.withOpacity(0.5),
-        child: ListView.builder(
-          controller: scrollController,
-          itemCount: categories.length,
-          itemBuilder: (context, index) {
-            final category = categories[index];
-            final isSelected = category == selectedCategory;
-            return CategoryListItem(
-              title: category,
-              isSelected: isSelected,
-              onTap: () => onCategorySelected(category),
-            );
-          },
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.5),
+          border: Border(
+            right: BorderSide(
+              color: Colors.white.withOpacity(0.1),
+              width: 1,
+            ),
+          ),
+        ),
+        child: Column(
+          children: [
+            // 分类标题
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.2),
+                border: Border(
+                  bottom: BorderSide(
+                    color: Colors.white.withOpacity(0.1),
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.category, color: Colors.white70),
+                  SizedBox(width: 12),
+                  Text(
+                    '分类',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 分类列表
+            Expanded(
+              child: ListView.builder(
+                controller: scrollController,
+                itemCount: categories.length,
+                itemBuilder: (context, index) {
+                  final category = categories[index];
+                  final isSelected = category == selectedCategory;
+                  return CategoryListItem(
+                    title: category,
+                    isSelected: isSelected,
+                    onTap: () => onCategorySelected(category),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -79,17 +121,54 @@ class _CategoryListItemState extends State<CategoryListItem> {
           }
         });
       },
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-        color: _isFocused ? Colors.blue.withOpacity(0.3) : Colors.transparent,
-        child: Text(
-          widget.title,
-          maxLines: 1,
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: widget.isSelected ? FontWeight.bold : FontWeight.normal,
-            color: widget.isSelected ? Colors.blue.shade300 : Colors.white,
+        decoration: BoxDecoration(
+          color: _isFocused
+              ? Colors.blue.withOpacity(0.3)
+              : widget.isSelected
+              ? Colors.blue.withOpacity(0.1)
+              : Colors.transparent,
+          border: Border(
+            left: BorderSide(
+              color: widget.isSelected ? Colors.blue : Colors.transparent,
+              width: 4,
+            ),
           ),
+        ),
+        child: Row(
+          children: [
+            // 选中指示器
+            if (widget.isSelected)
+              const Icon(
+                Icons.check_circle,
+                color: Colors.blue,
+                size: 20,
+              )
+            else
+              const SizedBox(width: 20),
+            const SizedBox(width: 12),
+            // 分类名称
+            Expanded(
+              child: Text(
+                widget.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: widget.isSelected || _isFocused
+                      ? FontWeight.bold
+                      : FontWeight.normal,
+                  color: widget.isSelected
+                      ? Colors.blue.shade300
+                      : _isFocused
+                      ? Colors.white
+                      : Colors.white70,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

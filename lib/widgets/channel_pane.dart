@@ -22,10 +22,17 @@ class ChannelPane extends StatelessWidget {
   Widget build(BuildContext context) {
     return FocusScope(
       node: focusScopeNode,
-      autofocus: true, // 默认让中栏获取焦点
+      autofocus: true,
       child: Container(
         color: Colors.black.withOpacity(0.3),
-        child: ListView.builder(
+        child: channels.isEmpty
+            ? const Center(
+          child: Text(
+            '该分类暂无频道',
+            style: TextStyle(color: Colors.white70, fontSize: 18),
+          ),
+        )
+            : ListView.builder(
           controller: scrollController,
           itemCount: channels.length,
           itemBuilder: (context, index) {
@@ -73,55 +80,87 @@ class _ChannelListItemState extends State<ChannelListItem> {
           _isFocused = hasFocus;
           if (hasFocus) {
             widget.onFocus();
+            // 平滑滚动到焦点项
             Scrollable.ensureVisible(
               context,
-              alignment: 0.5, // 0.5 表示滚动到中心
-              duration: const Duration(milliseconds: 300), // 平滑滚动的动画时长
-              curve: Curves.easeInOut, // 动画曲线
+              alignment: 0.5,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
             );
           }
         });
       },
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-        color: _isFocused ? Colors.blue.withOpacity(0.8) : Colors.transparent,
+        decoration: BoxDecoration(
+          color: _isFocused ? Colors.blue.withOpacity(0.8) : Colors.transparent,
+          border: Border(
+            left: BorderSide(
+              color: _isFocused ? Colors.blue : Colors.transparent,
+              width: 4,
+            ),
+          ),
+        ),
         child: Row(
           children: [
-            Text(
-              '${widget.channelNumber}',
-              style: TextStyle(fontSize: 18, color: _isFocused ? Colors.white : Colors.grey),
+            // 频道编号
+            SizedBox(
+              width: 40,
+              child: Text(
+                '${widget.channelNumber}',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: _isFocused ? Colors.white : Colors.grey,
+                  fontWeight: _isFocused ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
             ),
-            const SizedBox(width: 20),
+            const SizedBox(width: 12),
 
-            // --- 这是修改过的部分 ---
+            // 频道 Logo
             Container(
               width: 80,
               height: 40,
               alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(4),
+              ),
               child: widget.channel.logoUrl.isNotEmpty
                   ? Image.network(
                 widget.channel.logoUrl,
                 fit: BoxFit.contain,
-                loadingBuilder: (BuildContext context, Widget child, ImageChunkEvent? loadingProgress) {
+                loadingBuilder: (context, child, loadingProgress) {
                   if (loadingProgress == null) return child;
                   return Center(
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.0,
-                      value: loadingProgress.expectedTotalBytes != null
-                          ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
-                          : null,
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.0,
+                        value: loadingProgress.expectedTotalBytes != null
+                            ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                            : null,
+                      ),
                     ),
                   );
                 },
-                errorBuilder: (BuildContext context, Object exception, StackTrace? stackTrace) {
-                  return const Icon(Icons.image_not_supported_outlined, color: Colors.grey);
+                errorBuilder: (context, error, stackTrace) {
+                  return const Icon(
+                    Icons.image_not_supported_outlined,
+                    color: Colors.grey,
+                    size: 20,
+                  );
                 },
               )
-                  : const Icon(Icons.tv, color: Colors.grey),
+                  : const Icon(Icons.tv, color: Colors.grey, size: 24),
             ),
-            // --- 修改结束 ---
 
-            const SizedBox(width: 20),
+            const SizedBox(width: 16),
+
+            // 频道名称
             Expanded(
               child: Text(
                 widget.channel.name,
@@ -129,11 +168,19 @@ class _ChannelListItemState extends State<ChannelListItem> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 20,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: _isFocused ? FontWeight.bold : FontWeight.normal,
                   color: _isFocused ? Colors.white : Colors.white70,
                 ),
               ),
             ),
+
+            // 播放图标
+            if (_isFocused)
+              const Icon(
+                Icons.play_circle_outline,
+                color: Colors.white,
+                size: 24,
+              ),
           ],
         ),
       ),

@@ -16,21 +16,27 @@ class _PlayerPageState extends State<PlayerPage> {
   late VideoPlayerController _controller;
   bool _isLoading = true;
   String? _errorMessage;
+  bool _showControls = false;
 
   @override
   void initState() {
     super.initState();
     _enterFullScreen();
+    _initializePlayer();
+  }
 
+  void _initializePlayer() {
     _controller = VideoPlayerController.networkUrl(
       Uri.parse(widget.channel.url),
     )
       ..initialize().then((_) {
+        if (!mounted) return;
         setState(() {
           _isLoading = false;
         });
         _controller.play();
       }).catchError((error) {
+        if (!mounted) return;
         setState(() {
           _isLoading = false;
           _errorMessage = error.toString();
@@ -41,7 +47,6 @@ class _PlayerPageState extends State<PlayerPage> {
 
   @override
   void dispose() {
-    _exitFullScreen();
     _controller.dispose();
     super.dispose();
   }
@@ -64,52 +69,123 @@ class _PlayerPageState extends State<PlayerPage> {
     });
   }
 
+  void _toggleControls() {
+    setState(() {
+      _showControls = !_showControls;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black, // 黑色背景将自动成为“黑边”
-      body: GestureDetector(
-        onTap: _togglePlayPause,
-        child: Center( // Center Widget 会将视频居中
-          child: _isLoading
-              ? const CircularProgressIndicator()
-              : _controller.value.isInitialized
-          // --- 这里是核心改动：恢复使用 AspectRatio ---
-              ? AspectRatio(
-            // 关键：使用视频控制器提供的实际宽高比
-            aspectRatio: _controller.value.aspectRatio,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                VideoPlayer(_controller),
-                // 播放/暂停的图标指示器 (保持不变)
-                if (!_controller.value.isPlaying && !_isLoading)
-                  Icon(
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          _exitFullScreen();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: GestureDetector(
+          onTap: _toggleControls,
+          child: Stack(
+            children: [
+              // 视频播放器
+              Center(
+                child: _isLoading
+                    ? const CircularProgressIndicator()
+                    : _controller.value.isInitialized
+                    ? AspectRatio(
+                  aspectRatio: _controller.value.aspectRatio,
+                  child: VideoPlayer(_controller),
+                )
+                    : Padding(
+                  padding: const EdgeInsets.all(20.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        color: Colors.red,
+                        size: 64,
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        '无法播放此频道',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        '错误详情: $_errorMessage',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('返回'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // 播放/暂停指示器
+              if (!_controller.value.isPlaying && !_isLoading && _controller.value.isInitialized)
+                Center(
+                  child: Icon(
                     Icons.play_arrow,
                     color: Colors.white.withOpacity(0.7),
                     size: 80,
                   ),
-              ],
-            ),
-          )
-          // --- 核心改动结束 ---
-              : Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text(
-                  '无法播放此频道',
-                  style: TextStyle(color: Colors.white, fontSize: 22),
                 ),
-                const SizedBox(height: 16),
-                Text(
-                  '错误详情: $_errorMessage',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.red, fontSize: 16),
+              // 控制栏
+              if (_showControls && _controller.value.isInitialized)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.7),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back, color: Colors.white),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Text(
+                            widget.channel.name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              ],
-            ),
+            ],
           ),
         ),
       ),

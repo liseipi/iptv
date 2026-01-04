@@ -1,30 +1,46 @@
 // lib/services/iptv_service.dart
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../models/channel.dart';
 
 class IptvService {
   static const String m3uUrl = 'https://assets.musicses.vip/TV-IPV4.m3u';
+  static const Duration requestTimeout = Duration(seconds: 30);
 
   static Future<List<Channel>> fetchAndParseM3u() async {
     try {
-      final response = await http.get(Uri.parse(m3uUrl));
+      final response = await http
+          .get(Uri.parse(m3uUrl))
+          .timeout(
+        requestTimeout,
+        onTimeout: () {
+          throw TimeoutException('请求超时，请检查网络连接');
+        },
+      );
 
       if (response.statusCode == 200) {
         // 使用 utf8.decode 以防止解析中文字符时出现乱码
         final m3uContent = utf8.decode(response.bodyBytes);
         return _parseM3u(m3uContent);
       } else {
-        throw Exception('Failed to load M3U file');
+        throw HttpException('HTTP ${response.statusCode}: 无法加载频道列表');
       }
+    } on SocketException {
+      throw Exception('网络连接失败，请检查网络设置');
+    } on TimeoutException catch (e) {
+      throw Exception(e.message);
+    } on HttpException catch (e) {
+      throw Exception(e.message);
     } catch (e) {
-      throw Exception('Error fetching M3U: $e');
+      throw Exception('加载频道列表失败: $e');
     }
   }
 
   // 返回分组后的 Map
   static Future<Map<String, List<Channel>>> fetchAndGroupChannels() async {
-    final channels = await fetchAndParseM3u(); // 调用我们之前的方法
+    final channels = await fetchAndParseM3u();
     final Map<String, List<Channel>> groupedChannels = {};
 
     for (var channel in channels) {
@@ -57,7 +73,7 @@ class IptvService {
           final displayName = line.split(',').last.trim();
 
           channels.add(Channel(
-            name: name.isNotEmpty ? name : displayName, // 如果tvg-name为空，则使用末尾的名称
+            name: name.isNotEmpty ? name : displayName,
             logoUrl: logo,
             groupTitle: group,
             url: url,
