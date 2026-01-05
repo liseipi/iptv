@@ -38,7 +38,8 @@ class _PreviewPaneState extends State<PreviewPane> {
 
       setState(() {
         _controller = null;
-        _isInitializing = false;
+        // 关键修改：在防抖期间也显示加载状态，而不是加载失败
+        _isInitializing = true;
       });
 
       // 防抖：300ms 内没有新的频道焦点变化，才开始加载
