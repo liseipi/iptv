@@ -16,6 +16,7 @@ dependencies:
   http: ^1.5.0
   chewie: ^1.13.0
   video_player: ^2.10.0
+  shared_preferences: ^2.3.5
   # 建议添加图片缓存库以提升性能
   # cached_network_image: ^3.3.0
 

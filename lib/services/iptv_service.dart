@@ -3,17 +3,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import '../models/channel.dart';
+import 'proxy_manager.dart';
 
 class IptvService {
-  // https://iptv.tsinghua.edu.cn/hls/  #清华大学 IPTV 源
-  // http://iptv.huuc.edu.cn/hls/       #河南城建学院 IPTV
   static const String remoteM3uUrl = 'https://assets.musicses.vip/TV-IPV4.m3u';
-
-  // 是否使用代码中硬编码的本地测试源（开发调试时设为 true，发布时改为 false）
   static const bool useLocalTestSource = false;
 
-  // 本地测试用的 M3U 内容，直接定义为字符串变量
   static const String localTestM3uContent = '''
 #EXTM3U x-tvg-url="http://epg.51zmt.top:8000/e.xml"
 #EXTINF:-1 tvg-name="CCTV1" tvg-id="256" tvg-logo="https://livecdn.zbds.org/logo/CCTV1.png" group-title="央视频道", CCTV1
@@ -26,20 +23,41 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
 
   static const Duration requestTimeout = Duration(seconds: 30);
 
+  // 创建支持代理的 HTTP 客户端
+  static Future<http.Client> _createHttpClient() async {
+    final proxyManager = await ProxyManager.getInstance();
+    final proxyUrl = proxyManager.getProxyUrl();
+
+    if (proxyUrl != null) {
+      final httpClient = HttpClient();
+      httpClient.findProxy = (uri) {
+        return 'PROXY ${proxyManager.proxyHost}:${proxyManager.proxyPort}';
+      };
+      httpClient.badCertificateCallback =
+          (X509Certificate cert, String host, int port) => true;
+
+      return IOClient(httpClient);
+    }
+
+    return http.Client();
+  }
+
   /// 主入口：根据配置选择本地测试源还是远程源
   static Future<List<Channel>> fetchAndParseM3u() async {
+    http.Client? client;
+
     try {
       String m3uContent;
 
       if (useLocalTestSource) {
-        // 直接使用代码中定义的字符串
         m3uContent = localTestM3uContent;
       } else {
-        // 从网络加载远程源
-        final response = await http.get(Uri.parse(remoteM3uUrl)).timeout(
+        client = await _createHttpClient();
+
+        final response = await client.get(Uri.parse(remoteM3uUrl)).timeout(
           requestTimeout,
           onTimeout: () {
-            throw TimeoutException('请求超时，请检查网络连接');
+            throw TimeoutException('请求超时，请检查网络连接或代理设置');
           },
         );
 
@@ -52,13 +70,15 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
 
       return _parseM3u(m3uContent);
     } on SocketException {
-      throw Exception('网络连接失败，请检查网络设置');
+      throw Exception('网络连接失败，请检查网络设置或代理配置');
     } on TimeoutException catch (e) {
       throw Exception(e.message ?? '请求超时');
     } on HttpException catch (e) {
       throw Exception(e.message);
     } catch (e) {
       throw Exception('加载频道列表失败: $e');
+    } finally {
+      client?.close();
     }
   }
 
@@ -93,7 +113,6 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
             final logo = _extractValue(line, 'tvg-logo');
             final group = _extractValue(line, 'group-title');
 
-            // 取逗号后的显示名称作为备选
             final displayName = line.contains(',')
                 ? line.split(',').last.trim()
                 : '未知频道';
@@ -111,7 +130,7 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
     return channels;
   }
 
-  /// 提取属性值（如 tvg-name、tvg-logo、group-title）
+  /// 提取属性值
   static String _extractValue(String line, String key) {
     final regex = RegExp('$key="(.*?)"');
     final match = regex.firstMatch(line);

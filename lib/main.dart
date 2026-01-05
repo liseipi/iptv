@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'models/channel.dart';
 import 'screens/player_page.dart';
+import 'screens/settings_page.dart';  // 添加导入
 import 'services/iptv_service.dart';
 import 'widgets/category_pane.dart';
 import 'widgets/channel_pane.dart';
@@ -51,6 +52,7 @@ class _HomePageState extends State<HomePage> {
   // --- Focus Management ---
   final FocusScopeNode _categoryPaneFocusScope = FocusScopeNode();
   final FocusScopeNode _channelPaneFocusScope = FocusScopeNode();
+  final FocusNode _settingsButtonFocus = FocusNode();  // 添加设置按钮焦点
 
   final ScrollController _categoryScrollController = ScrollController();
   final ScrollController _channelScrollController = ScrollController();
@@ -69,7 +71,6 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _groupedChannels = data;
         _categories = data.keys.toList();
-        // 默认选中第一个分类，并让第一个分类的第一个频道成为初始焦点
         if (_categories.isNotEmpty) {
           _selectedCategory = _categories.first;
           _focusedChannel = _groupedChannels[_selectedCategory]?.first;
@@ -104,23 +105,18 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  // 当在中栏的频道焦点变化时，由 ChannelPane 调用
   void _onChannelFocused(Channel channel) {
-    // 使用 setState 更新焦点频道，从而触发 PreviewPane 的重建
     setState(() {
       _focusedChannel = channel;
     });
   }
 
-  // 当在左栏选择新的分类时，由 CategoryPane 调用
   void _onCategorySelected(String category) {
     setState(() {
       _selectedCategory = category;
-      // 切换分类时，默认让新分类的第一个频道成为焦点
       _focusedChannel = _groupedChannels[category]?.first;
     });
 
-    // 使用 Future.delayed 确保在下一帧渲染时执行，此时 ListView 已经更新
     Future.delayed(Duration.zero, () {
       if (_channelScrollController.hasClients) {
         _channelScrollController.jumpTo(0.0);
@@ -135,10 +131,27 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // 添加打开设置页面的方法
+  void _openSettings() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const SettingsPage()),
+    );
+
+    // 如果设置已更改，重新加载频道列表
+    if (result == true) {
+      setState(() {
+        _isLoading = true;
+      });
+      await _loadChannels();
+    }
+  }
+
   @override
   void dispose() {
     _categoryPaneFocusScope.dispose();
     _channelPaneFocusScope.dispose();
+    _settingsButtonFocus.dispose();
     _categoryScrollController.dispose();
     _channelScrollController.dispose();
     super.dispose();
@@ -181,13 +194,15 @@ class _HomePageState extends State<HomePage> {
       );
     }
 
-    // 使用 Shortcuts 和 Actions 替代 RawKeyboardListener
     return Shortcuts(
       shortcuts: <LogicalKeySet, Intent>{
         LogicalKeySet(LogicalKeyboardKey.arrowRight): const _MoveToChannelsIntent(),
         LogicalKeySet(LogicalKeyboardKey.arrowLeft): const _MoveToCategoriesIntent(),
+        LogicalKeySet(LogicalKeyboardKey.arrowUp): const _MoveUpIntent(),
         LogicalKeySet(LogicalKeyboardKey.select): const ActivateIntent(),
         LogicalKeySet(LogicalKeyboardKey.enter): const ActivateIntent(),
+        // 添加菜单键快捷方式
+        LogicalKeySet(LogicalKeyboardKey.contextMenu): const _OpenSettingsIntent(),
       },
       child: Actions(
         actions: <Type, Action<Intent>>{
@@ -203,7 +218,24 @@ class _HomePageState extends State<HomePage> {
             onInvoke: (_) {
               if (_channelPaneFocusScope.hasFocus) {
                 _categoryPaneFocusScope.requestFocus();
+              } else if (_settingsButtonFocus.hasFocus) {
+                _categoryPaneFocusScope.requestFocus();
               }
+              return null;
+            },
+          ),
+          _MoveUpIntent: CallbackAction<_MoveUpIntent>(
+            onInvoke: (_) {
+              // 从分类或频道面板向上导航到设置按钮
+              if (_categoryPaneFocusScope.hasFocus || _channelPaneFocusScope.hasFocus) {
+                _settingsButtonFocus.requestFocus();
+              }
+              return null;
+            },
+          ),
+          _OpenSettingsIntent: CallbackAction<_OpenSettingsIntent>(
+            onInvoke: (_) {
+              _openSettings();
               return null;
             },
           ),
@@ -224,38 +256,141 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
                 // 主内容
-                Row(
+                Column(
                   children: [
-                    // --- 左栏: 分类 ---
-                    Expanded(
-                      flex: 2,
-                      child: CategoryPane(
-                        scrollController: _categoryScrollController,
-                        focusScopeNode: _categoryPaneFocusScope,
-                        categories: _categories,
-                        selectedCategory: _selectedCategory!,
-                        onCategorySelected: _onCategorySelected,
+                    // 顶部设置栏
+                    Container(
+                      height: 60,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.7),
+                        border: Border(
+                          bottom: BorderSide(
+                            color: Colors.white.withOpacity(0.1),
+                            width: 1,
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'IPTV 播放器',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          // 可通过遥控器聚焦的设置按钮
+                          Focus(
+                            focusNode: _settingsButtonFocus,
+                            onKeyEvent: (node, event) {
+                              if (event is KeyDownEvent) {
+                                // 向下键返回到分类面板
+                                if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                                  _categoryPaneFocusScope.requestFocus();
+                                  return KeyEventResult.handled;
+                                }
+                                // 向右键跳到频道面板
+                                if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                                  _channelPaneFocusScope.requestFocus();
+                                  return KeyEventResult.handled;
+                                }
+                                // 确认键打开设置
+                                if (event.logicalKey == LogicalKeyboardKey.select ||
+                                    event.logicalKey == LogicalKeyboardKey.enter) {
+                                  _openSettings();
+                                  return KeyEventResult.handled;
+                                }
+                              }
+                              return KeyEventResult.ignored;
+                            },
+                            child: Builder(
+                              builder: (context) {
+                                final isFocused = _settingsButtonFocus.hasFocus;
+                                return InkWell(
+                                  onTap: _openSettings,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isFocused
+                                          ? Colors.blue.withOpacity(0.8)
+                                          : Colors.grey.withOpacity(0.3),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: isFocused ? Colors.white : Colors.transparent,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.settings,
+                                          color: isFocused ? Colors.white : Colors.white70,
+                                          size: 24,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          '设置',
+                                          style: TextStyle(
+                                            color: isFocused ? Colors.white : Colors.white70,
+                                            fontSize: 18,
+                                            fontWeight: isFocused
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    // --- 中栏: 频道 ---
+                    // 主内容区域
                     Expanded(
-                      flex: 3,
-                      child: ChannelPane(
-                        key: ValueKey(_selectedCategory),
-                        scrollController: _channelScrollController,
-                        focusScopeNode: _channelPaneFocusScope,
-                        // 关键: 只传入当前选中分类的频道列表
-                        channels: _groupedChannels[_selectedCategory] ?? [],
-                        onChannelFocused: _onChannelFocused,
-                        onChannelSubmitted: _onChannelSubmitted,
-                      ),
-                    ),
-                    // --- 右栏: 预览 ---
-                    Expanded(
-                      flex: 5,
-                      child: PreviewPane(
-                        // 关键: 传入当前获得焦点的频道
-                        channel: _focusedChannel,
+                      child: Row(
+                        children: [
+                          // --- 左栏: 分类 ---
+                          Expanded(
+                            flex: 2,
+                            child: CategoryPane(
+                              scrollController: _categoryScrollController,
+                              focusScopeNode: _categoryPaneFocusScope,
+                              categories: _categories,
+                              selectedCategory: _selectedCategory!,
+                              onCategorySelected: _onCategorySelected,
+                            ),
+                          ),
+                          // --- 中栏: 频道 ---
+                          Expanded(
+                            flex: 3,
+                            child: ChannelPane(
+                              key: ValueKey(_selectedCategory),
+                              scrollController: _channelScrollController,
+                              focusScopeNode: _channelPaneFocusScope,
+                              channels: _groupedChannels[_selectedCategory] ?? [],
+                              onChannelFocused: _onChannelFocused,
+                              onChannelSubmitted: _onChannelSubmitted,
+                            ),
+                          ),
+                          // --- 右栏: 预览 ---
+                          Expanded(
+                            flex: 5,
+                            child: PreviewPane(
+                              channel: _focusedChannel,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -276,4 +411,12 @@ class _MoveToChannelsIntent extends Intent {
 
 class _MoveToCategoriesIntent extends Intent {
   const _MoveToCategoriesIntent();
+}
+
+class _MoveUpIntent extends Intent {
+  const _MoveUpIntent();
+}
+
+class _OpenSettingsIntent extends Intent {
+  const _OpenSettingsIntent();
 }
