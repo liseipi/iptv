@@ -39,17 +39,15 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
-  // --- State Management ---
+  // --- 状态管理 ---
   Map<String, List<Channel>> _groupedChannels = {};
   List<String> _categories = [];
-
   String? _selectedCategory;
   Channel? _focusedChannel;
-
   bool _isLoading = true;
   String? _errorMessage;
 
-  // --- Focus Management ---
+  // --- 焦点管理 ---
   final FocusScopeNode _categoryPaneFocusScope = FocusScopeNode();
   final FocusScopeNode _channelPaneFocusScope = FocusScopeNode();
   final FocusNode _settingsButtonFocus = FocusNode();
@@ -57,19 +55,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final ScrollController _categoryScrollController = ScrollController();
   final ScrollController _channelScrollController = ScrollController();
 
-  // 新增：PreviewPane 的 GlobalKey
   final GlobalKey<PreviewPaneState> _previewPaneKey = GlobalKey<PreviewPaneState>();
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this); // 添加生命周期监听
+    WidgetsBinding.instance.addObserver(this);
     _loadChannels();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 当应用恢复时，确保预览也恢复
     if (state == AppLifecycleState.resumed) {
       _previewPaneKey.currentState?.resumePreview();
     }
@@ -79,7 +75,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     try {
       final data = await IptvService.fetchAndGroupChannels();
       if (!mounted) return;
-
       setState(() {
         _groupedChannels = data;
         _categories = data.keys.toList();
@@ -92,13 +87,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       });
     } catch (e) {
       if (!mounted) return;
-
       setState(() {
         _isLoading = false;
         _errorMessage = e.toString();
       });
       _showError('加载频道失败: $e');
-      print("Error loading channels: $e");
     }
   }
 
@@ -108,10 +101,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         SnackBar(
           content: Text(message),
           duration: const Duration(seconds: 3),
-          action: SnackBarAction(
-            label: '重试',
-            onPressed: _loadChannels,
-          ),
+          action: SnackBarAction(label: '重试', onPressed: _loadChannels),
         ),
       );
     }
@@ -128,7 +118,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _selectedCategory = category;
       _focusedChannel = _groupedChannels[category]?.first;
     });
-
     Future.delayed(Duration.zero, () {
       if (_channelScrollController.hasClients) {
         _channelScrollController.jumpTo(0.0);
@@ -136,42 +125,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
-  // 修改：在导航前暂停预览，返回后恢复
   void _onChannelSubmitted(Channel channel) async {
-    // 暂停预览
     _previewPaneKey.currentState?.pausePreview();
-
-    // 导航到播放页面
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => PlayerPage(channel: channel)),
     );
-
-    // 返回后恢复预览
     if (mounted) {
       _previewPaneKey.currentState?.resumePreview();
     }
   }
 
-  // 打开设置页面
   void _openSettings() async {
-    // 打开设置前也暂停预览
     _previewPaneKey.currentState?.pausePreview();
-
     final result = await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const SettingsPage()),
     );
-
-    // 如果设置已更改，重新加载频道列表
     if (result == true) {
-      setState(() {
-        _isLoading = true;
-      });
+      setState(() => _isLoading = true);
       await _loadChannels();
     }
-
-    // 恢复预览
     if (mounted) {
       _previewPaneKey.currentState?.resumePreview();
     }
@@ -179,7 +153,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this); // 移除生命周期监听
+    WidgetsBinding.instance.removeObserver(this);
     _categoryPaneFocusScope.dispose();
     _channelPaneFocusScope.dispose();
     _settingsButtonFocus.dispose();
@@ -246,9 +220,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
           _MoveToCategoriesIntent: CallbackAction<_MoveToCategoriesIntent>(
             onInvoke: (_) {
-              if (_channelPaneFocusScope.hasFocus) {
-                _categoryPaneFocusScope.requestFocus();
-              } else if (_settingsButtonFocus.hasFocus) {
+              if (_channelPaneFocusScope.hasFocus || _settingsButtonFocus.hasFocus) {
                 _categoryPaneFocusScope.requestFocus();
               }
               return null;
@@ -256,9 +228,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
           _MoveUpIntent: CallbackAction<_MoveUpIntent>(
             onInvoke: (_) {
-              // 从分类或频道面板向上导航到设置按钮
-              if (_categoryPaneFocusScope.hasFocus || _channelPaneFocusScope.hasFocus) {
-                _settingsButtonFocus.requestFocus();
+              // 关键修复逻辑：
+              // 只有当当前焦点的 Item 已经是列表的第一个（即无法再向上移动）时，
+              // 才跳转到设置按钮。否则，忽略此 Action，让 Flutter 原生焦点系统处理列表内移动。
+              final currentFocus = FocusManager.instance.primaryFocus;
+
+              // 检查当前焦点是否在 Scope 的最顶端
+              if (_categoryPaneFocusScope.hasFocus) {
+                // 如果是分类面板，尝试向上寻找，找不动了再跳设置
+                bool canMoveUp = currentFocus?.focusInDirection(TraversalDirection.up) ?? false;
+                if (!canMoveUp) _settingsButtonFocus.requestFocus();
+              } else if (_channelPaneFocusScope.hasFocus) {
+                bool canMoveUp = currentFocus?.focusInDirection(TraversalDirection.up) ?? false;
+                if (!canMoveUp) _settingsButtonFocus.requestFocus();
               }
               return null;
             },
@@ -275,17 +257,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           child: Scaffold(
             body: Stack(
               children: [
-                // 背景图
                 Positioned.fill(
                   child: Image.asset(
                     'assets/background.jpg',
                     fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(color: Colors.black);
-                    },
+                    errorBuilder: (context, error, stackTrace) => Container(color: Colors.black),
                   ),
                 ),
-                // 主内容
                 Column(
                   children: [
                     // 顶部设置栏
@@ -294,42 +272,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                       decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.7),
-                        border: Border(
-                          bottom: BorderSide(
-                            color: Colors.white.withOpacity(0.1),
-                            width: 1,
-                          ),
-                        ),
+                        border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.1))),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'IPTV 播放器',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          // 可通过遥控器聚焦的设置按钮
+                          const Text('IPTV 播放器', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
                           Focus(
                             focusNode: _settingsButtonFocus,
                             onKeyEvent: (node, event) {
                               if (event is KeyDownEvent) {
-                                // 向下键返回到分类面板
                                 if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
                                   _categoryPaneFocusScope.requestFocus();
                                   return KeyEventResult.handled;
                                 }
-                                // 向右键跳到频道面板
-                                if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-                                  _channelPaneFocusScope.requestFocus();
-                                  return KeyEventResult.handled;
-                                }
-                                // 确认键打开设置
-                                if (event.logicalKey == LogicalKeyboardKey.select ||
-                                    event.logicalKey == LogicalKeyboardKey.enter) {
+                                if (event.logicalKey == LogicalKeyboardKey.select || event.logicalKey == LogicalKeyboardKey.enter) {
                                   _openSettings();
                                   return KeyEventResult.handled;
                                 }
@@ -343,39 +300,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   onTap: _openSettings,
                                   child: AnimatedContainer(
                                     duration: const Duration(milliseconds: 200),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 8,
-                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                                     decoration: BoxDecoration(
-                                      color: isFocused
-                                          ? Colors.blue.withOpacity(0.8)
-                                          : Colors.grey.withOpacity(0.3),
+                                      color: isFocused ? Colors.blue : Colors.grey.withOpacity(0.3),
                                       borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(
-                                        color: isFocused ? Colors.white : Colors.transparent,
-                                        width: 2,
-                                      ),
+                                      border: Border.all(color: isFocused ? Colors.white : Colors.transparent, width: 2),
                                     ),
                                     child: Row(
-                                      mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Icon(
-                                          Icons.settings,
-                                          color: isFocused ? Colors.white : Colors.white70,
-                                          size: 24,
-                                        ),
+                                        Icon(Icons.settings, color: isFocused ? Colors.white : Colors.white70),
                                         const SizedBox(width: 8),
-                                        Text(
-                                          '设置',
-                                          style: TextStyle(
-                                            color: isFocused ? Colors.white : Colors.white70,
-                                            fontSize: 18,
-                                            fontWeight: isFocused
-                                                ? FontWeight.bold
-                                                : FontWeight.normal,
-                                          ),
-                                        ),
+                                        const Text('设置', style: TextStyle(color: Colors.white)),
                                       ],
                                     ),
                                   ),
@@ -386,22 +321,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
-                    // 主内容区域
+                    // 内容区
                     Expanded(
                       child: Row(
                         children: [
-                          // --- 左栏: 分类 ---
                           Expanded(
                             flex: 2,
                             child: CategoryPane(
                               scrollController: _categoryScrollController,
                               focusScopeNode: _categoryPaneFocusScope,
                               categories: _categories,
-                              selectedCategory: _selectedCategory!,
+                              selectedCategory: _selectedCategory ?? '',
                               onCategorySelected: _onCategorySelected,
                             ),
                           ),
-                          // --- 中栏: 频道 ---
                           Expanded(
                             flex: 3,
                             child: ChannelPane(
@@ -413,13 +346,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               onChannelSubmitted: _onChannelSubmitted,
                             ),
                           ),
-                          // --- 右栏: 预览 ---
                           Expanded(
                             flex: 5,
-                            child: PreviewPane(
-                              key: _previewPaneKey, // 添加 key
-                              channel: _focusedChannel,
-                            ),
+                            child: PreviewPane(key: _previewPaneKey, channel: _focusedChannel),
                           ),
                         ],
                       ),
@@ -435,19 +364,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 }
 
-// Intent 类定义
-class _MoveToChannelsIntent extends Intent {
-  const _MoveToChannelsIntent();
-}
-
-class _MoveToCategoriesIntent extends Intent {
-  const _MoveToCategoriesIntent();
-}
-
-class _MoveUpIntent extends Intent {
-  const _MoveUpIntent();
-}
-
-class _OpenSettingsIntent extends Intent {
-  const _OpenSettingsIntent();
-}
+// Intent 定义保持不变
+class _MoveToChannelsIntent extends Intent { const _MoveToChannelsIntent(); }
+class _MoveToCategoriesIntent extends Intent { const _MoveToCategoriesIntent(); }
+class _MoveUpIntent extends Intent { const _MoveUpIntent(); }
+class _OpenSettingsIntent extends Intent { const _OpenSettingsIntent(); }
