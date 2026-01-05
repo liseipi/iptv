@@ -10,44 +10,50 @@ class PreviewPane extends StatefulWidget {
   const PreviewPane({super.key, this.channel});
 
   @override
-  State<PreviewPane> createState() => _PreviewPaneState();
+  State<PreviewPane> createState() => PreviewPaneState(); // 修改这里
 }
 
-class _PreviewPaneState extends State<PreviewPane> {
+// 去掉下划线，改为公开类
+class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
   VideoPlayerController? _controller;
   Timer? _debounce;
   Channel? _currentChannel;
   bool _isInitializing = false;
+  bool _isPaused = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _currentChannel = widget.channel;
     _initializePlayerForChannel(widget.channel);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _controller?.pause();
+    } else if (state == AppLifecycleState.resumed && !_isPaused) {
+      _controller?.play();
+    }
   }
 
   @override
   void didUpdateWidget(PreviewPane oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.channel != null && widget.channel!.url != oldWidget.channel?.url) {
-      // 取消之前的定时器
       _debounce?.cancel();
-
-      // 标记当前控制器为待废弃，但不立即释放
       final controllerToDispose = _controller;
 
       setState(() {
         _controller = null;
-        // 关键修改：在防抖期间也显示加载状态，而不是加载失败
         _isInitializing = true;
       });
 
-      // 防抖：300ms 内没有新的频道焦点变化，才开始加载
       _debounce = Timer(const Duration(milliseconds: 300), () {
-        // 现在可以安全释放旧控制器
         controllerToDispose?.dispose();
 
-        if (mounted) {
+        if (mounted && !_isPaused) {
           setState(() {
             _currentChannel = widget.channel;
           });
@@ -58,38 +64,32 @@ class _PreviewPaneState extends State<PreviewPane> {
   }
 
   void _initializePlayerForChannel(Channel? channel) {
-    if (channel == null || !mounted) return;
+    if (channel == null || !mounted || _isPaused) return;
 
     setState(() {
       _isInitializing = true;
     });
 
-    // 保存旧的控制器引用
     final oldController = _controller;
-
     final newController = VideoPlayerController.networkUrl(
       Uri.parse(channel.url),
     );
     _controller = newController;
 
     newController.initialize().then((_) {
-      // 检查控制器是否已经被替换
       if (!mounted) {
         newController.dispose();
         return;
       }
 
-      if (newController == _controller) {
+      if (newController == _controller && !_isPaused) {
         setState(() {
           _isInitializing = false;
         });
         newController.play();
         newController.setVolume(0.5);
-
-        // 在新控制器初始化成功后再释放旧控制器
         oldController?.dispose();
       } else {
-        // 如果在初始化期间用户又切换了频道，则丢弃这个旧的控制器
         newController.dispose();
       }
     }).catchError((e) {
@@ -112,8 +112,25 @@ class _PreviewPaneState extends State<PreviewPane> {
     });
   }
 
+  // 公开方法：暂停预览
+  void pausePreview() {
+    _isPaused = true;
+    _controller?.pause();
+  }
+
+  // 公开方法：恢复预览
+  void resumePreview() {
+    _isPaused = false;
+    if (_controller != null && _controller!.value.isInitialized) {
+      _controller!.play();
+    } else if (_currentChannel != null) {
+      _initializePlayerForChannel(_currentChannel);
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _debounce?.cancel();
     _controller?.dispose();
     super.dispose();
@@ -129,7 +146,6 @@ class _PreviewPaneState extends State<PreviewPane> {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 视频预览窗口
             AspectRatio(
               aspectRatio: 16 / 9,
               child: Container(
@@ -148,7 +164,6 @@ class _PreviewPaneState extends State<PreviewPane> {
               ),
             ),
             const SizedBox(height: 20),
-            // 节目信息
             if (_currentChannel != null) ...[
               Text(
                 _currentChannel!.name,
@@ -171,7 +186,11 @@ class _PreviewPaneState extends State<PreviewPane> {
               ),
               const SizedBox(height: 5),
               Text(
-                _isInitializing ? "正在加载..." : "预览播放中",
+                _isPaused
+                    ? "预览已暂停"
+                    : _isInitializing
+                    ? "正在加载..."
+                    : "预览播放中",
                 maxLines: 1,
                 style: TextStyle(
                   color: Colors.grey.shade400,
@@ -186,6 +205,22 @@ class _PreviewPaneState extends State<PreviewPane> {
   }
 
   Widget _buildVideoWidget() {
+    if (_isPaused) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.pause_circle_outline, size: 64, color: Colors.white38),
+            SizedBox(height: 16),
+            Text(
+              "预览已暂停",
+              style: TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (_isInitializing) {
       return const Center(
         child: Column(

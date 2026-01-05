@@ -21,7 +21,7 @@ class ProxyManager {
 
   // 获取代理配置
   bool get isProxyEnabled => _prefs.getBool(_keyProxyEnabled) ?? false;
-  String get proxyHost => _prefs.getString(_keyProxyHost) ?? '127.0.0.1';
+  String get proxyHost => _prefs.getString(_keyProxyHost) ?? '192.168.3.1';
   int get proxyPort => _prefs.getInt(_keyProxyPort) ?? 1080;
 
   // 保存代理配置

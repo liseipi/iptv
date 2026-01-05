@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'models/channel.dart';
 import 'screens/player_page.dart';
-import 'screens/settings_page.dart';  // 添加导入
+import 'screens/settings_page.dart';
 import 'services/iptv_service.dart';
 import 'widgets/category_pane.dart';
 import 'widgets/channel_pane.dart';
@@ -38,7 +38,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // --- State Management ---
   Map<String, List<Channel>> _groupedChannels = {};
   List<String> _categories = [];
@@ -52,15 +52,27 @@ class _HomePageState extends State<HomePage> {
   // --- Focus Management ---
   final FocusScopeNode _categoryPaneFocusScope = FocusScopeNode();
   final FocusScopeNode _channelPaneFocusScope = FocusScopeNode();
-  final FocusNode _settingsButtonFocus = FocusNode();  // 添加设置按钮焦点
+  final FocusNode _settingsButtonFocus = FocusNode();
 
   final ScrollController _categoryScrollController = ScrollController();
   final ScrollController _channelScrollController = ScrollController();
 
+  // 新增：PreviewPane 的 GlobalKey
+  final GlobalKey<PreviewPaneState> _previewPaneKey = GlobalKey<PreviewPaneState>();
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this); // 添加生命周期监听
     _loadChannels();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 当应用恢复时，确保预览也恢复
+    if (state == AppLifecycleState.resumed) {
+      _previewPaneKey.currentState?.resumePreview();
+    }
   }
 
   Future<void> _loadChannels() async {
@@ -124,15 +136,28 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  void _onChannelSubmitted(Channel channel) {
-    Navigator.push(
+  // 修改：在导航前暂停预览，返回后恢复
+  void _onChannelSubmitted(Channel channel) async {
+    // 暂停预览
+    _previewPaneKey.currentState?.pausePreview();
+
+    // 导航到播放页面
+    await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => PlayerPage(channel: channel)),
     );
+
+    // 返回后恢复预览
+    if (mounted) {
+      _previewPaneKey.currentState?.resumePreview();
+    }
   }
 
-  // 添加打开设置页面的方法
+  // 打开设置页面
   void _openSettings() async {
+    // 打开设置前也暂停预览
+    _previewPaneKey.currentState?.pausePreview();
+
     final result = await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const SettingsPage()),
@@ -145,10 +170,16 @@ class _HomePageState extends State<HomePage> {
       });
       await _loadChannels();
     }
+
+    // 恢复预览
+    if (mounted) {
+      _previewPaneKey.currentState?.resumePreview();
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this); // 移除生命周期监听
     _categoryPaneFocusScope.dispose();
     _channelPaneFocusScope.dispose();
     _settingsButtonFocus.dispose();
@@ -201,7 +232,6 @@ class _HomePageState extends State<HomePage> {
         LogicalKeySet(LogicalKeyboardKey.arrowUp): const _MoveUpIntent(),
         LogicalKeySet(LogicalKeyboardKey.select): const ActivateIntent(),
         LogicalKeySet(LogicalKeyboardKey.enter): const ActivateIntent(),
-        // 添加菜单键快捷方式
         LogicalKeySet(LogicalKeyboardKey.contextMenu): const _OpenSettingsIntent(),
       },
       child: Actions(
@@ -387,6 +417,7 @@ class _HomePageState extends State<HomePage> {
                           Expanded(
                             flex: 5,
                             child: PreviewPane(
+                              key: _previewPaneKey, // 添加 key
                               channel: _focusedChannel,
                             ),
                           ),
