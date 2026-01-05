@@ -186,6 +186,8 @@ class _HomePageState extends State<HomePage> {
       shortcuts: <LogicalKeySet, Intent>{
         LogicalKeySet(LogicalKeyboardKey.arrowRight): const _MoveToChannelsIntent(),
         LogicalKeySet(LogicalKeyboardKey.arrowLeft): const _MoveToCategoriesIntent(),
+        LogicalKeySet(LogicalKeyboardKey.select): const ActivateIntent(),
+        LogicalKeySet(LogicalKeyboardKey.enter): const ActivateIntent(),
       },
       child: Actions(
         actions: <Type, Action<Intent>>{
