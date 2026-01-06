@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:video_player/video_player.dart';
 import 'models/channel.dart';
 import 'screens/player_page.dart';
 import 'screens/settings_page.dart';
@@ -148,22 +149,45 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
+  // lib/main.dart (关键修改部分)
   void _onChannelSubmitted(Channel channel) async {
-    // 暂停预览
-    _previewPaneKey.currentState?.pausePreview();
+    // 🎯 第一步：从预览面板获取控制器
+    final previewController = _previewPaneKey.currentState?.prepareControllerForPlayback();
 
-    // 导航到播放页面
-    await Navigator.push(
+    if (previewController != null) {
+      debugPrint("✅ 主页面：获取到预览控制器，准备无缝切换");
+    } else {
+      debugPrint("⚠️ 主页面：预览控制器不可用，将重新加载");
+    }
+
+    // 🎯 第二步：导航到播放页面
+    // ⚠️ 关键修复：使用 pop() 的返回值来获取控制器，而不是在 PopScope 中传递
+    final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => PlayerPage(channel: channel)),
+      MaterialPageRoute(
+        builder: (context) => PlayerPage(
+          channel: channel,
+          previewController: previewController,
+        ),
+      ),
     );
 
-    // 返回后恢复预览
+    // 🎯 第三步：处理返回的控制器
     if (mounted) {
-      // 给一点延迟，确保页面完全返回
-      Future.delayed(const Duration(milliseconds: 300), () {
+      debugPrint("主页面：从播放页面返回");
+
+      // result 就是从播放页面 pop 时传递的控制器
+      final returnedController = result as VideoPlayerController?;
+
+      Future.delayed(const Duration(milliseconds: 100), () {
         if (mounted) {
-          _previewPaneKey.currentState?.resumePreview();
+          _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
+
+          if (returnedController != null) {
+            debugPrint("✅ 主页面：成功接收并传递控制器，实现双向无缝切换");
+          } else {
+            debugPrint("⚠️ 主页面：未接收到控制器，预览将重新加载");
+          }
         }
       });
     }

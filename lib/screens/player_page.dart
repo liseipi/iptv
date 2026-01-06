@@ -1,4 +1,4 @@
-// lib/screens/player_page.dart
+// lib/screens/player_page.dart (修复版 - 解决导航错误)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -6,7 +6,13 @@ import '../models/channel.dart';
 
 class PlayerPage extends StatefulWidget {
   final Channel channel;
-  const PlayerPage({super.key, required this.channel});
+  final VideoPlayerController? previewController;
+
+  const PlayerPage({
+    super.key,
+    required this.channel,
+    this.previewController,
+  });
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -17,6 +23,7 @@ class _PlayerPageState extends State<PlayerPage> {
   bool _isLoading = true;
   String? _errorMessage;
   bool _showControls = false;
+  bool _isUsingPreviewController = false;
 
   @override
   void initState() {
@@ -26,6 +33,31 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   void _initializePlayer() {
+    // 优先使用预览控制器
+    if (widget.previewController != null &&
+        widget.previewController!.value.isInitialized) {
+
+      _controller = widget.previewController!;
+      _isUsingPreviewController = true;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      // 恢复音量和播放
+      _controller.setVolume(1.0);
+      if (!_controller.value.isPlaying) {
+        _controller.play();
+      }
+
+      debugPrint("✅ 播放页面：使用预览控制器，无需重新加载");
+      return;
+    }
+
+    // 创建新控制器
+    debugPrint("⚠️ 播放页面：预览控制器不可用，创建新控制器");
+    _isUsingPreviewController = false;
+
     _controller = VideoPlayerController.networkUrl(
       Uri.parse(widget.channel.url),
     )
@@ -41,13 +73,14 @@ class _PlayerPageState extends State<PlayerPage> {
           _isLoading = false;
           _errorMessage = error.toString();
         });
-        print("Video Player Error: $error");
+        debugPrint("Video Player Error: $error");
       });
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    // 🎯 关键：不释放控制器，让预览页面接管
+    debugPrint("✅ 播放页面：保留控制器，准备返回");
     super.dispose();
   }
 
@@ -75,13 +108,33 @@ class _PlayerPageState extends State<PlayerPage> {
     });
   }
 
+  // 🎯 准备返回时的控制器
+  VideoPlayerController? _prepareControllerForReturn() {
+    if (_controller.value.isInitialized) {
+      // 降低音量，准备返回预览模式
+      _controller.setVolume(0.5);
+      debugPrint("✅ 播放页面：准备返回控制器");
+      return _controller;
+    }
+    return null;
+  }
+
+  // 🎯 处理返回操作
+  void _handleBack() {
+    _exitFullScreen();
+    final controller = _prepareControllerForReturn();
+    Navigator.of(context).pop(controller);
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: true,
+      // 🎯 修复：只在这里退出全屏，不再调用 pop
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) {
           _exitFullScreen();
+          debugPrint("✅ 播放页面：已弹出，返回控制器");
         }
       },
       child: Scaffold(
@@ -93,7 +146,19 @@ class _PlayerPageState extends State<PlayerPage> {
               // 视频播放器
               Center(
                 child: _isLoading
-                    ? const CircularProgressIndicator()
+                    ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text(
+                      _isUsingPreviewController
+                          ? '正在从预览切换...'
+                          : '正在加载...',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                )
                     : _controller.value.isInitialized
                     ? AspectRatio(
                   aspectRatio: _controller.value.aspectRatio,
@@ -128,15 +193,18 @@ class _PlayerPageState extends State<PlayerPage> {
                       ),
                       const SizedBox(height: 24),
                       ElevatedButton(
-                        onPressed: () => Navigator.of(context).pop(),
+                        onPressed: _handleBack,
                         child: const Text('返回'),
                       ),
                     ],
                   ),
                 ),
               ),
+
               // 播放/暂停指示器
-              if (!_controller.value.isPlaying && !_isLoading && _controller.value.isInitialized)
+              if (!_controller.value.isPlaying &&
+                  !_isLoading &&
+                  _controller.value.isInitialized)
                 Center(
                   child: Icon(
                     Icons.play_arrow,
@@ -144,6 +212,7 @@ class _PlayerPageState extends State<PlayerPage> {
                     size: 80,
                   ),
                 ),
+
               // 控制栏
               if (_showControls && _controller.value.isInitialized)
                 Positioned(
@@ -166,19 +235,42 @@ class _PlayerPageState extends State<PlayerPage> {
                       children: [
                         IconButton(
                           icon: const Icon(Icons.arrow_back, color: Colors.white),
-                          onPressed: () => Navigator.of(context).pop(),
+                          onPressed: _handleBack,
                         ),
                         const SizedBox(width: 16),
                         Expanded(
-                          child: Text(
-                            widget.channel.name,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.channel.name,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (_isUsingPreviewController)
+                                const Row(
+                                  children: [
+                                    Icon(
+                                      Icons.check_circle,
+                                      color: Colors.green,
+                                      size: 12,
+                                    ),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      '无缝切换',
+                                      style: TextStyle(
+                                        color: Colors.green,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
                           ),
                         ),
                       ],
