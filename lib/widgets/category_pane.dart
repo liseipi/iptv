@@ -71,7 +71,7 @@ class CategoryPane extends StatelessWidget {
                   return CategoryListItem(
                     title: category,
                     isSelected: isSelected,
-                    onTap: () => onCategorySelected(category),
+                    onCategorySelected: () => onCategorySelected(category),
                   );
                 },
               ),
@@ -86,13 +86,13 @@ class CategoryPane extends StatelessWidget {
 class CategoryListItem extends StatefulWidget {
   final String title;
   final bool isSelected;
-  final VoidCallback onTap;
+  final VoidCallback onCategorySelected;
 
   const CategoryListItem({
     super.key,
     required this.title,
     required this.isSelected,
-    required this.onTap,
+    required this.onCategorySelected,
   });
 
   @override
@@ -105,21 +105,21 @@ class _CategoryListItemState extends State<CategoryListItem> {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: widget.onTap,
+      onTap: widget.onCategorySelected,
       onFocusChange: (hasFocus) {
         setState(() {
           _isFocused = hasFocus;
-          // 当获得焦点时，也触发选中
-          if (hasFocus) {
-            widget.onTap();
-            Scrollable.ensureVisible(
-              context,
-              alignment: 0.5,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
-          }
         });
+        // ✅ 焦点改变时更新频道列表（但不自动跳转到频道）
+        if (hasFocus) {
+          widget.onCategorySelected();
+          Scrollable.ensureVisible(
+            context,
+            alignment: 0.5,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          );
+        }
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),

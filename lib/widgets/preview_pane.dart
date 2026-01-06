@@ -66,7 +66,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     // 保存旧控制器引用
     final oldController = _controller;
 
-    // 立即清空状态
+    // 立即清空状态和控制器引用
     setState(() {
       _controller = null;
       _isInitializing = true;
@@ -74,18 +74,22 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       _currentChannel = newChannel;
     });
 
+    // ⚠️ 关键改动：立即同步停止和释放旧控制器
+    if (oldController != null) {
+      try {
+        oldController.pause();
+        oldController.dispose();
+      } catch (e) {
+        debugPrint('Error disposing old controller: $e');
+      }
+    }
+
     // 使用防抖，避免快速切换时创建过多控制器
-    _debounce = Timer(const Duration(milliseconds: 300), () {
+    _debounce = Timer(const Duration(milliseconds: 400), () {
       // 在防抖期间，可能又发生了新的切换
       if (currentVersion != _controllerVersion) {
-        oldController?.dispose();
         return;
       }
-
-      // 延迟释放旧控制器，确保切换平滑
-      Future.delayed(const Duration(milliseconds: 100), () {
-        oldController?.dispose();
-      });
 
       // 初始化新控制器
       if (mounted && !_isPaused) {
@@ -135,16 +139,22 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
           newController == _controller &&
           _isInitializing) {
 
-        print("Preview initialization timeout for ${channel.name}");
+        debugPrint("Preview initialization timeout for ${channel.name}");
 
         setState(() {
           _errorMessage = "加载超时";
           _isInitializing = false;
         });
 
-        // 清理失败的控制器
-        _controller = null;
-        newController.dispose();
+        // ⚠️ 关键改动：同步清理失败的控制器
+        if (_controller == newController) {
+          _controller = null;
+        }
+        try {
+          newController.dispose();
+        } catch (e) {
+          debugPrint('Error disposing timeout controller: $e');
+        }
       }
     });
 
@@ -152,13 +162,21 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     newController.initialize().then((_) {
       // 双重检查：版本号和挂载状态
       if (!mounted || currentVersion != _controllerVersion) {
-        newController.dispose();
+        try {
+          newController.dispose();
+        } catch (e) {
+          debugPrint('Error disposing unmounted controller: $e');
+        }
         return;
       }
 
       // 再次确认这个控制器还是当前控制器
       if (newController != _controller) {
-        newController.dispose();
+        try {
+          newController.dispose();
+        } catch (e) {
+          debugPrint('Error disposing replaced controller: $e');
+        }
         return;
       }
 
@@ -175,18 +193,26 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         newController.setVolume(0.5);
       }
 
-      print("Preview initialized successfully for ${channel.name}");
+      debugPrint("Preview initialized successfully for ${channel.name}");
 
     }).catchError((error) {
-      print("Preview initialization error for ${channel.name}: $error");
+      debugPrint("Preview initialization error for ${channel.name}: $error");
 
       if (!mounted || currentVersion != _controllerVersion) {
-        newController.dispose();
+        try {
+          newController.dispose();
+        } catch (e) {
+          debugPrint('Error disposing error controller: $e');
+        }
         return;
       }
 
       if (newController != _controller) {
-        newController.dispose();
+        try {
+          newController.dispose();
+        } catch (e) {
+          debugPrint('Error disposing replaced error controller: $e');
+        }
         return;
       }
 
@@ -197,22 +223,49 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         _isInitializing = false;
       });
 
-      // 清理失败的控制器
-      _controller = null;
-      newController.dispose();
+      // ⚠️ 关键改动：同步清理失败的控制器
+      if (_controller == newController) {
+        _controller = null;
+      }
+      try {
+        newController.dispose();
+      } catch (e) {
+        debugPrint('Error disposing failed controller: $e');
+      }
     });
   }
 
   /// 暂停预览
   void pausePreview() {
-    print("Preview paused");
+    debugPrint("Preview paused");
     _isPaused = true;
-    _controller?.pause();
+
+    // ⚠️ 关键改动：暂停时也释放控制器，减少资源占用
+    final oldController = _controller;
+    _controller = null;
+
+    if (oldController != null) {
+      try {
+        oldController.pause();
+        // 延迟释放，避免恢复时立即重建
+        Future.delayed(const Duration(milliseconds: 100), () {
+          try {
+            oldController.dispose();
+          } catch (e) {
+            debugPrint('Error disposing paused controller: $e');
+          }
+        });
+      } catch (e) {
+        debugPrint('Error pausing controller: $e');
+      }
+    }
+
+    setState(() {});
   }
 
   /// 恢复预览
   void resumePreview() {
-    print("Preview resumed");
+    debugPrint("Preview resumed");
     _isPaused = false;
 
     if (_controller != null && _controller!.value.isInitialized) {
@@ -226,7 +279,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    print("PreviewPane disposing...");
+    debugPrint("PreviewPane disposing...");
 
     WidgetsBinding.instance.removeObserver(this);
 
@@ -234,8 +287,18 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     _debounce?.cancel();
     _initTimeout?.cancel();
 
-    // 释放控制器
-    _controller?.dispose();
+    // ⚠️ 关键改动：同步释放控制器
+    final controller = _controller;
+    _controller = null;
+
+    if (controller != null) {
+      try {
+        controller.pause();
+        controller.dispose();
+      } catch (e) {
+        debugPrint('Error disposing controller in dispose: $e');
+      }
+    }
 
     // 增加版本号，使所有待处理的异步操作失效
     _controllerVersion++;

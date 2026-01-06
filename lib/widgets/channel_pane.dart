@@ -1,4 +1,5 @@
 // lib/widgets/channel_pane.dart
+import 'dart:async'; // 添加这个导入
 import 'package:flutter/material.dart';
 import '../models/channel.dart';
 
@@ -22,7 +23,7 @@ class ChannelPane extends StatelessWidget {
   Widget build(BuildContext context) {
     return FocusScope(
       node: focusScopeNode,
-      autofocus: true,
+      autofocus: false,
       child: Container(
         color: Colors.black.withOpacity(0.3),
         child: channels.isEmpty
@@ -40,8 +41,7 @@ class ChannelPane extends StatelessWidget {
             return ChannelListItem(
               channel: channel,
               channelNumber: index + 1,
-              // 关键修改：第一个频道自动获得焦点
-              autofocus: index == 0,
+              autofocus: false,
               onFocus: () => onChannelFocused(channel),
               onTap: () => onChannelSubmitted(channel),
             );
@@ -55,7 +55,7 @@ class ChannelPane extends StatelessWidget {
 class ChannelListItem extends StatefulWidget {
   final Channel channel;
   final int channelNumber;
-  final bool autofocus; // 新增参数
+  final bool autofocus;
   final VoidCallback onFocus;
   final VoidCallback onTap;
 
@@ -63,7 +63,7 @@ class ChannelListItem extends StatefulWidget {
     super.key,
     required this.channel,
     required this.channelNumber,
-    this.autofocus = false, // 默认为 false
+    this.autofocus = false,
     required this.onFocus,
     required this.onTap,
   });
@@ -74,27 +74,78 @@ class ChannelListItem extends StatefulWidget {
 
 class _ChannelListItemState extends State<ChannelListItem> {
   bool _isFocused = false;
+  Timer? _throttleTimer; // 节流计时器
+  bool _canTriggerFocus = true; // 是否可以触发焦点回调
+
+  // 节流时间间隔（毫秒）
+  static const int _throttleDuration = 300;
+
+  @override
+  void dispose() {
+    _throttleTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleFocusChange(bool hasFocus) {
+    setState(() {
+      _isFocused = hasFocus;
+    });
+
+    if (hasFocus) {
+      // 立即滚动到可见位置（不节流）
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+
+      // 使用节流处理焦点回调
+      if (_canTriggerFocus) {
+        // 立即触发一次
+        widget.onFocus();
+
+        // 设置节流标志
+        _canTriggerFocus = false;
+
+        // 启动节流计时器
+        _throttleTimer?.cancel();
+        _throttleTimer = Timer(
+          const Duration(milliseconds: _throttleDuration),
+              () {
+            if (mounted) {
+              _canTriggerFocus = true;
+              // 如果当前仍然有焦点，再次触发（确保最后一次切换生效）
+              if (_isFocused) {
+                widget.onFocus();
+              }
+            }
+          },
+        );
+      } else {
+        // 在节流期间，记录需要在计时器结束后触发
+        _throttleTimer?.cancel();
+        _throttleTimer = Timer(
+          const Duration(milliseconds: _throttleDuration),
+              () {
+            if (mounted) {
+              _canTriggerFocus = true;
+              // 如果当前仍然有焦点，触发回调
+              if (_isFocused) {
+                widget.onFocus();
+              }
+            }
+          },
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Focus(
-      // 关键修改：使用 Focus widget 包装，支持 autofocus
       autofocus: widget.autofocus,
-      onFocusChange: (hasFocus) {
-        setState(() {
-          _isFocused = hasFocus;
-          if (hasFocus) {
-            widget.onFocus();
-            // 平滑滚动到焦点项
-            Scrollable.ensureVisible(
-              context,
-              alignment: 0.5,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
-          }
-        });
-      },
+      onFocusChange: _handleFocusChange,
       child: InkWell(
         onTap: widget.onTap,
         child: AnimatedContainer(
