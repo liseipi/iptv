@@ -1,5 +1,5 @@
-// lib/widgets/channel_pane.dart
-import 'dart:async'; // 添加这个导入
+// lib/widgets/channel_pane.dart (修复版 - 自动聚焦第一个频道)
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/channel.dart';
 
@@ -41,7 +41,8 @@ class ChannelPane extends StatelessWidget {
             return ChannelListItem(
               channel: channel,
               channelNumber: index + 1,
-              autofocus: false,
+              // 🎯 关键修复: 第一个频道自动获得焦点
+              autofocus: index == 0,
               onFocus: () => onChannelFocused(channel),
               onTap: () => onChannelSubmitted(channel),
             );
@@ -74,10 +75,9 @@ class ChannelListItem extends StatefulWidget {
 
 class _ChannelListItemState extends State<ChannelListItem> {
   bool _isFocused = false;
-  Timer? _throttleTimer; // 节流计时器
-  bool _canTriggerFocus = true; // 是否可以触发焦点回调
+  Timer? _throttleTimer;
+  bool _canTriggerFocus = true;
 
-  // 节流时间间隔（毫秒）
   static const int _throttleDuration = 300;
 
   @override
@@ -92,7 +92,7 @@ class _ChannelListItemState extends State<ChannelListItem> {
     });
 
     if (hasFocus) {
-      // 立即滚动到可见位置（不节流）
+      // 立即滚动到可见位置
       Scrollable.ensureVisible(
         context,
         alignment: 0.5,
@@ -102,20 +102,15 @@ class _ChannelListItemState extends State<ChannelListItem> {
 
       // 使用节流处理焦点回调
       if (_canTriggerFocus) {
-        // 立即触发一次
         widget.onFocus();
-
-        // 设置节流标志
         _canTriggerFocus = false;
 
-        // 启动节流计时器
         _throttleTimer?.cancel();
         _throttleTimer = Timer(
           const Duration(milliseconds: _throttleDuration),
               () {
             if (mounted) {
               _canTriggerFocus = true;
-              // 如果当前仍然有焦点，再次触发（确保最后一次切换生效）
               if (_isFocused) {
                 widget.onFocus();
               }
@@ -123,14 +118,12 @@ class _ChannelListItemState extends State<ChannelListItem> {
           },
         );
       } else {
-        // 在节流期间，记录需要在计时器结束后触发
         _throttleTimer?.cancel();
         _throttleTimer = Timer(
           const Duration(milliseconds: _throttleDuration),
               () {
             if (mounted) {
               _canTriggerFocus = true;
-              // 如果当前仍然有焦点，触发回调
               if (_isFocused) {
                 widget.onFocus();
               }

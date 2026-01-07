@@ -1,4 +1,4 @@
-// lib/main.dart
+// lib/main.dart (优化版 - 改进遥控器导航逻辑)
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -58,7 +58,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   final GlobalKey<PreviewPaneState> _previewPaneKey = GlobalKey<PreviewPaneState>();
 
-  // 防抖计时器，避免快速切换时过度刷新预览
+  // 防抖计时器
   Timer? _previewDebounce;
 
   @override
@@ -120,10 +120,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _onChannelFocused(Channel channel) {
-    // 取消之前的防抖计时器
     _previewDebounce?.cancel();
-
-    // 使用防抖，避免快速切换时频繁更新预览
     _previewDebounce = Timer(const Duration(milliseconds: 200), () {
       if (mounted && _focusedChannel != channel) {
         setState(() {
@@ -133,34 +130,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
+  // 🎯 改进1: 分类选中时自动选择第一个频道
   void _onCategorySelected(String category) {
     setState(() {
       _selectedCategory = category;
-      // 立即设置第一个频道，避免预览空白
       final channels = _groupedChannels[category];
       _focusedChannel = channels?.isNotEmpty == true ? channels!.first : null;
     });
 
-    // 重置频道列表滚动位置
-    Future.delayed(Duration.zero, () {
-      if (_channelScrollController.hasClients) {
-        _channelScrollController.jumpTo(0.0);
+    // 🎯 关键修复: 重置频道列表滚动位置到顶部，并聚焦第一个频道
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (mounted) {
+        // 先重置滚动位置
+        if (_channelScrollController.hasClients) {
+          _channelScrollController.jumpTo(0.0);
+        }
+
+        // 如果当前频道面板有焦点，重新聚焦到第一个频道
+        if (_channelPaneFocusScope.hasFocus) {
+          // 强制刷新焦点，确保焦点在第一个频道上
+          _channelPaneFocusScope.requestFocus();
+        }
       }
     });
   }
 
-  // lib/main.dart (关键修改部分)
   void _onChannelSubmitted(Channel channel) async {
-    // 🎯 第一步：从预览面板获取控制器
     final previewController = _previewPaneKey.currentState?.prepareControllerForPlayback();
 
     if (previewController != null) {
-      debugPrint("✅ 主页面：获取到预览控制器，准备无缝切换");
+      debugPrint("✅ 主页面:获取到预览控制器,准备无缝切换");
     } else {
-      debugPrint("⚠️ 主页面：预览控制器不可用，将重新加载");
+      debugPrint("⚠️ 主页面:预览控制器不可用,将重新加载");
     }
 
-    // 🎯 第二步：导航到播放页面
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -171,27 +174,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ),
     );
 
-    // 🎯 第三步：处理返回的控制器
     if (mounted) {
-      debugPrint("主页面：从播放页面返回");
-
+      debugPrint("主页面:从播放页面返回");
       final returnedController = result as VideoPlayerController?;
 
-      // ✅ 减少延迟，立即传递
-      if (mounted) {
-        _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) {
+          _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
 
-        if (returnedController != null) {
-          debugPrint("✅ 主页面：成功接收并传递控制器，实现双向无缝切换");
-        } else {
-          debugPrint("⚠️ 主页面：未接收到控制器，预览将重新加载");
+          if (returnedController != null) {
+            debugPrint("✅ 主页面:成功接收并传递控制器,实现双向无缝切换");
+          } else {
+            debugPrint("⚠️ 主页面:未接收到控制器,预览将重新加载");
+          }
         }
-      }
+      });
     }
   }
 
   void _openSettings() async {
-    // 暂停预览
     _previewPaneKey.currentState?.pausePreview();
 
     final result = await Navigator.push(
@@ -199,13 +200,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       MaterialPageRoute(builder: (context) => const SettingsPage()),
     );
 
-    // 如果设置有更改，重新加载频道
     if (result == true) {
       setState(() => _isLoading = true);
       await _loadChannels();
     }
 
-    // 恢复预览
     if (mounted) {
       Future.delayed(const Duration(milliseconds: 300), () {
         if (mounted) {
@@ -285,6 +284,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
           _MoveToCategoriesIntent: CallbackAction<_MoveToCategoriesIntent>(
             onInvoke: (_) {
+              // 🎯 改进2: 只有从频道面板或设置按钮才能左移到分类面板
               if (_channelPaneFocusScope.hasFocus || _settingsButtonFocus.hasFocus) {
                 _categoryPaneFocusScope.requestFocus();
               }
@@ -294,13 +294,31 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _MoveUpIntent: CallbackAction<_MoveUpIntent>(
             onInvoke: (_) {
               final currentFocus = FocusManager.instance.primaryFocus;
-              if (_categoryPaneFocusScope.hasFocus) {
+
+              // 🎯 改进3: 二级分类(频道面板)限制上移
+              if (_channelPaneFocusScope.hasFocus) {
+                // 尝试在频道列表内部上移
                 bool canMoveUp = currentFocus?.focusInDirection(TraversalDirection.up) ?? false;
-                if (!canMoveUp) _settingsButtonFocus.requestFocus();
-              } else if (_channelPaneFocusScope.hasFocus) {
-                bool canMoveUp = currentFocus?.focusInDirection(TraversalDirection.up) ?? false;
-                if (!canMoveUp) _settingsButtonFocus.requestFocus();
+                // 如果已经在频道列表顶部,不做任何操作(不移动到设置)
+                return null;
               }
+
+              // 🎯 改进4: 一级分类(分类面板)可以上移到设置
+              if (_categoryPaneFocusScope.hasFocus) {
+                // 先尝试在分类面板内部上移
+                bool canMoveUp = currentFocus?.focusInDirection(TraversalDirection.up) ?? false;
+
+                // 🎯 关键修复: 如果无法在面板内上移(已经在顶部)，则跳转到设置按钮
+                if (!canMoveUp) {
+                  // 延迟一帧确保焦点系统处理完成
+                  Future.delayed(const Duration(milliseconds: 50), () {
+                    if (mounted) {
+                      _settingsButtonFocus.requestFocus();
+                    }
+                  });
+                }
+              }
+
               return null;
             },
           ),
@@ -354,6 +372,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             focusNode: _settingsButtonFocus,
                             onKeyEvent: (node, event) {
                               if (event is KeyDownEvent) {
+                                // 🎯 改进5: 设置按钮下移时,优先回到分类面板
                                 if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
                                   _categoryPaneFocusScope.requestFocus();
                                   return KeyEventResult.handled;
@@ -365,6 +384,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                 }
                               }
                               return KeyEventResult.ignored;
+                            },
+                            // 🎯 关键修复: 添加 onFocusChange 回调确保焦点变化立即响应
+                            onFocusChange: (hasFocus) {
+                              // 触发重建以更新按钮样式
+                              if (mounted) {
+                                setState(() {});
+                              }
                             },
                             child: Builder(
                               builder: (context) {
