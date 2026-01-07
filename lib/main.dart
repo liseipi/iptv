@@ -131,28 +131,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   // 🎯 改进1: 分类选中时自动选择第一个频道
-  void _onCategorySelected(String category) {
+  // 🎯 新增参数: shouldResetChannel - 是否重置到第一个频道
+  void _onCategorySelected(String category, {bool shouldResetChannel = true}) {
+    // 如果分类没有变化，不做任何操作
+    if (_selectedCategory == category && !shouldResetChannel) {
+      return;
+    }
+
     setState(() {
       _selectedCategory = category;
-      final channels = _groupedChannels[category];
-      _focusedChannel = channels?.isNotEmpty == true ? channels!.first : null;
-    });
 
-    // 🎯 关键修复: 重置频道列表滚动位置到顶部，并聚焦第一个频道
-    Future.delayed(const Duration(milliseconds: 50), () {
-      if (mounted) {
-        // 先重置滚动位置
-        if (_channelScrollController.hasClients) {
-          _channelScrollController.jumpTo(0.0);
-        }
-
-        // 如果当前频道面板有焦点，重新聚焦到第一个频道
-        if (_channelPaneFocusScope.hasFocus) {
-          // 强制刷新焦点，确保焦点在第一个频道上
-          _channelPaneFocusScope.requestFocus();
-        }
+      // 🎯 关键修复: 只有在需要重置时才跳到第一个频道
+      if (shouldResetChannel) {
+        final channels = _groupedChannels[category];
+        _focusedChannel = channels?.isNotEmpty == true ? channels!.first : null;
       }
+      // 如果不重置，保持当前焦点的频道
     });
+
+    // 🎯 只有在重置频道时才滚动到顶部
+    if (shouldResetChannel) {
+      Future.delayed(const Duration(milliseconds: 50), () {
+        if (mounted) {
+          // 滚动到顶部
+          if (_channelScrollController.hasClients) {
+            _channelScrollController.jumpTo(0.0);
+          }
+
+          // 如果当前频道面板有焦点，重新聚焦到第一个频道
+          if (_channelPaneFocusScope.hasFocus) {
+            _channelPaneFocusScope.requestFocus();
+          }
+        }
+      });
+    }
   }
 
   void _onChannelSubmitted(Channel channel) async {

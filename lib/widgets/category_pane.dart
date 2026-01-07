@@ -1,12 +1,14 @@
 // lib/widgets/category_pane.dart (优化版 - 修复焦点显示问题)
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class CategoryPane extends StatelessWidget {
   final FocusScopeNode focusScopeNode;
   final ScrollController scrollController;
   final List<String> categories;
   final String selectedCategory;
-  final ValueChanged<String> onCategorySelected;
+  // 🎯 修改回调签名，支持传递 shouldResetChannel 参数
+  final Function(String category, {bool shouldResetChannel}) onCategorySelected;
 
   const CategoryPane({
     super.key,
@@ -73,7 +75,7 @@ class CategoryPane extends StatelessWidget {
                     isSelected: isSelected,
                     // 🎯 第一个分类默认获得焦点
                     autofocus: index == 0,
-                    onCategorySelected: () => onCategorySelected(category),
+                    onCategorySelected: onCategorySelected,
                   );
                 },
               ),
@@ -89,7 +91,8 @@ class CategoryListItem extends StatefulWidget {
   final String title;
   final bool isSelected;
   final bool autofocus;
-  final VoidCallback onCategorySelected;
+  // 🎯 修改回调签名
+  final Function(String category, {bool shouldResetChannel}) onCategorySelected;
 
   const CategoryListItem({
     super.key,
@@ -105,7 +108,6 @@ class CategoryListItem extends StatefulWidget {
 
 class _CategoryListItemState extends State<CategoryListItem> {
   bool _isFocused = false;
-  // 🎯 添加焦点节点，方便外部控制
   final FocusNode _focusNode = FocusNode();
 
   @override
@@ -120,15 +122,13 @@ class _CategoryListItemState extends State<CategoryListItem> {
       focusNode: _focusNode,
       autofocus: widget.autofocus,
       onFocusChange: (hasFocus) {
-        // 🎯 关键修复: 确保状态立即更新
         setState(() {
           _isFocused = hasFocus;
         });
 
-        // 焦点改变时更新频道列表
+        // 🎯 关键修复: 焦点改变时，不重置频道（保持当前频道）
         if (hasFocus) {
-          widget.onCategorySelected();
-          // 平滑滚动到可见位置
+          widget.onCategorySelected(widget.title, shouldResetChannel: false);
           Scrollable.ensureVisible(
             context,
             alignment: 0.5,
@@ -137,9 +137,27 @@ class _CategoryListItemState extends State<CategoryListItem> {
           );
         }
       },
+      onKey: (node, event) {
+        // 🎯 新增: 捕获上下键，表示用户在切换分类
+        if (event is KeyDownEvent) {
+          if (event.logicalKey == LogicalKeyboardKey.arrowUp ||
+              event.logicalKey == LogicalKeyboardKey.arrowDown) {
+            // 上下键切换时，延迟触发重置（等待焦点切换完成）
+            Future.delayed(const Duration(milliseconds: 100), () {
+              if (mounted && _isFocused) {
+                // 此时焦点已经在新的分类项上，需要重置频道
+                widget.onCategorySelected(widget.title, shouldResetChannel: true);
+              }
+            });
+          }
+        }
+        return KeyEventResult.ignored;
+      },
       child: InkWell(
-        onTap: widget.onCategorySelected,
-        // 🎯 移除 onFocusChange，避免重复处理
+        onTap: () {
+          // 🎯 点击时也重置频道
+          widget.onCategorySelected(widget.title, shouldResetChannel: true);
+        },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
