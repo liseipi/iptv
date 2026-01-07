@@ -283,8 +283,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       final controllerToPass = _controller;
       _controller = null;
       _isPaused = true;
-
-      setState(() {});
+      // setState(() {});
 
       return controllerToPass;
     }

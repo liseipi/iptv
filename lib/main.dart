@@ -161,7 +161,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
 
     // 🎯 第二步：导航到播放页面
-    // ⚠️ 关键修复：使用 pop() 的返回值来获取控制器，而不是在 PopScope 中传递
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -176,20 +175,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (mounted) {
       debugPrint("主页面：从播放页面返回");
 
-      // result 就是从播放页面 pop 时传递的控制器
       final returnedController = result as VideoPlayerController?;
 
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted) {
-          _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
+      // ✅ 减少延迟，立即传递
+      if (mounted) {
+        _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
 
-          if (returnedController != null) {
-            debugPrint("✅ 主页面：成功接收并传递控制器，实现双向无缝切换");
-          } else {
-            debugPrint("⚠️ 主页面：未接收到控制器，预览将重新加载");
-          }
+        if (returnedController != null) {
+          debugPrint("✅ 主页面：成功接收并传递控制器，实现双向无缝切换");
+        } else {
+          debugPrint("⚠️ 主页面：未接收到控制器，预览将重新加载");
         }
-      });
+      }
     }
   }
 

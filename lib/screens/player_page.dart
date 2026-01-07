@@ -129,13 +129,15 @@ class _PlayerPageState extends State<PlayerPage> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: true,
-      // 🎯 修复：只在这里退出全屏，不再调用 pop
+      canPop: false, // ✅ 阻止自动弹出，我们手动处理
       onPopInvokedWithResult: (didPop, result) {
+        // ✅ 如果已经弹出，只需退出全屏
         if (didPop) {
           _exitFullScreen();
-          debugPrint("✅ 播放页面：已弹出，返回控制器");
+          return;
         }
+        // ✅ 如果没有弹出，手动处理返回逻辑
+        _handleBack();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
