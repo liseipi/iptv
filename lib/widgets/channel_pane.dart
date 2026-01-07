@@ -1,6 +1,7 @@
-// lib/widgets/channel_pane.dart (修复版 - 自动聚焦第一个频道)
+// lib/widgets/channel_pane.dart (修复版 - 支持遥控器确认键打开频道)
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // 🎯 添加这个导入
 import '../models/channel.dart';
 
 class ChannelPane extends StatelessWidget {
@@ -41,7 +42,6 @@ class ChannelPane extends StatelessWidget {
             return ChannelListItem(
               channel: channel,
               channelNumber: index + 1,
-              // 🎯 关键修复: 第一个频道自动获得焦点
               autofocus: index == 0,
               onFocus: () => onChannelFocused(channel),
               onTap: () => onChannelSubmitted(channel),
@@ -139,6 +139,19 @@ class _ChannelListItemState extends State<ChannelListItem> {
     return Focus(
       autofocus: widget.autofocus,
       onFocusChange: _handleFocusChange,
+      // 🎯 关键修复：添加键盘事件处理
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent) {
+          // 处理确认键（遥控器的确认键或回车键）
+          if (event.logicalKey == LogicalKeyboardKey.select ||
+              event.logicalKey == LogicalKeyboardKey.enter) {
+            debugPrint('✅ 频道项：确认键触发，打开频道 ${widget.channel.name}');
+            widget.onTap(); // 触发播放
+            return KeyEventResult.handled;
+          }
+        }
+        return KeyEventResult.ignored;
+      },
       child: InkWell(
         onTap: widget.onTap,
         child: AnimatedContainer(

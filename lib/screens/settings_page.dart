@@ -1,4 +1,4 @@
-// lib/screens/settings_page.dart
+// lib/screens/settings_page.dart (完全修复版 - 解决禁用状态下的焦点问题)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/proxy_manager.dart';
@@ -209,7 +209,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // 代理开关 - 简化处理
+                      // 代理开关
                       InkWell(
                         focusNode: _enableSwitchFocus,
                         autofocus: false,
@@ -349,142 +349,138 @@ class _SettingsPageState extends State<SettingsPage> {
 
                       const SizedBox(height: 24),
 
-                      // 代理地址输入 - 简化处理
-                      InkWell(
-                        focusNode: _hostFocus,
-                        canRequestFocus: _proxyEnabled,
-                        onTap: _proxyEnabled ? () {
-                          // 点击后可以编辑
-                        } : null,
-                        onFocusChange: (hasFocus) {
-                          setState(() {});
-                        },
-                        child: Builder(
-                          builder: (context) {
-                            final isFocused = _hostFocus.hasFocus;
-                            return Opacity(
-                              opacity: _proxyEnabled ? 1.0 : 0.5,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                padding: const EdgeInsets.all(20),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade900,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: isFocused && _proxyEnabled
-                                        ? Colors.blue
-                                        : Colors.transparent,
-                                    width: 3,
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      '代理地址',
-                                      style: TextStyle(
-                                        color: _proxyEnabled
-                                            ? Colors.white70
-                                            : Colors.grey,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    TextField(
-                                      controller: _hostController,
-                                      enabled: _proxyEnabled,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 20,
-                                      ),
-                                      decoration: const InputDecoration(
-                                        hintText: '例如: 127.0.0.1 或 192.168.1.100',
-                                        hintStyle: TextStyle(
-                                          color: Colors.grey,
-                                          fontSize: 16,
-                                        ),
-                                        border: InputBorder.none,
-                                        contentPadding: EdgeInsets.zero,
-                                      ),
-                                    ),
-                                  ],
+                      // 🎯 关键修复：代理地址输入框 - 根据启用状态决定是否使用 focusNode
+                      ListenableBuilder(
+                        listenable: _hostFocus,
+                        builder: (context, child) {
+                          final isFocused = _hostFocus.hasFocus;
+                          return Opacity(
+                            opacity: _proxyEnabled ? 1.0 : 0.5,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade900,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: isFocused && _proxyEnabled
+                                      ? Colors.blue
+                                      : Colors.transparent,
+                                  width: 3,
                                 ),
                               ),
-                            );
-                          },
-                        ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '代理地址',
+                                    style: TextStyle(
+                                      color: _proxyEnabled
+                                          ? Colors.white70
+                                          : Colors.grey,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: _hostController,
+                                    // 🎯 关键：只在启用状态下使用 focusNode
+                                    focusNode: _proxyEnabled ? _hostFocus : null,
+                                    enabled: _proxyEnabled,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                    ),
+                                    decoration: const InputDecoration(
+                                      hintText: '例如: 127.0.0.1 或 192.168.1.100',
+                                      hintStyle: TextStyle(
+                                        color: Colors.grey,
+                                        fontSize: 16,
+                                      ),
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                    onSubmitted: (value) {
+                                      if (_proxyEnabled) {
+                                        _portFocus.requestFocus();
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
 
                       const SizedBox(height: 20),
 
-                      // 代理端口输入 - 简化处理
-                      InkWell(
-                        focusNode: _portFocus,
-                        canRequestFocus: _proxyEnabled,
-                        onTap: _proxyEnabled ? () {
-                          // 点击后可以编辑
-                        } : null,
-                        onFocusChange: (hasFocus) {
-                          setState(() {});
-                        },
-                        child: Builder(
-                          builder: (context) {
-                            final isFocused = _portFocus.hasFocus;
-                            return Opacity(
-                              opacity: _proxyEnabled ? 1.0 : 0.5,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                padding: const EdgeInsets.all(20),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade900,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: isFocused && _proxyEnabled
-                                        ? Colors.blue
-                                        : Colors.transparent,
-                                    width: 3,
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      '代理端口',
-                                      style: TextStyle(
-                                        color: _proxyEnabled
-                                            ? Colors.white70
-                                            : Colors.grey,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    TextField(
-                                      controller: _portController,
-                                      enabled: _proxyEnabled,
-                                      keyboardType: TextInputType.number,
-                                      inputFormatters: [
-                                        FilteringTextInputFormatter.digitsOnly
-                                      ],
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 20,
-                                      ),
-                                      decoration: const InputDecoration(
-                                        hintText: '例如: 1080 或 8080',
-                                        hintStyle: TextStyle(
-                                          color: Colors.grey,
-                                          fontSize: 16,
-                                        ),
-                                        border: InputBorder.none,
-                                        contentPadding: EdgeInsets.zero,
-                                      ),
-                                    ),
-                                  ],
+                      // 🎯 关键修复：代理端口输入框 - 根据启用状态决定是否使用 focusNode
+                      ListenableBuilder(
+                        listenable: _portFocus,
+                        builder: (context, child) {
+                          final isFocused = _portFocus.hasFocus;
+                          return Opacity(
+                            opacity: _proxyEnabled ? 1.0 : 0.5,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade900,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: isFocused && _proxyEnabled
+                                      ? Colors.blue
+                                      : Colors.transparent,
+                                  width: 3,
                                 ),
                               ),
-                            );
-                          },
-                        ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '代理端口',
+                                    style: TextStyle(
+                                      color: _proxyEnabled
+                                          ? Colors.white70
+                                          : Colors.grey,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: _portController,
+                                    // 🎯 关键：只在启用状态下使用 focusNode
+                                    focusNode: _proxyEnabled ? _portFocus : null,
+                                    enabled: _proxyEnabled,
+                                    keyboardType: TextInputType.number,
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly
+                                    ],
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                    ),
+                                    decoration: const InputDecoration(
+                                      hintText: '例如: 1080 或 8080',
+                                      hintStyle: TextStyle(
+                                        color: Colors.grey,
+                                        fontSize: 16,
+                                      ),
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                    onSubmitted: (value) {
+                                      if (_proxyEnabled) {
+                                        _saveFocus.requestFocus();
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
 
                       const SizedBox(height: 32),
@@ -651,7 +647,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                   '• 如遇到加载失败，请检查代理设置是否正确\n'
                                   '• 常见代理端口: HTTP 1080, SOCKS5 1080\n'
                                   '• 使用遥控器上下键在各项间切换\n'
-                                  '• 使用遥控器确认键切换开关或保存设置',
+                                  '• 使用遥控器确认键切换开关或保存设置\n'
+                                  '• 在输入框中按确认键可跳到下一项',
                               style: TextStyle(
                                 color: Colors.white70,
                                 fontSize: 16,

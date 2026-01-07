@@ -1,4 +1,5 @@
-// lib/screens/player_page.dart (修复版 - 解决导航错误)
+// lib/screens/player_page.dart (添加重试机制 - 最多尝试3次)
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -24,6 +25,12 @@ class _PlayerPageState extends State<PlayerPage> {
   String? _errorMessage;
   bool _showControls = false;
   bool _isUsingPreviewController = false;
+
+  // 🎯 新增：重试相关变量
+  int _retryCount = 0;
+  static const int _maxRetries = 3;
+  static const Duration _retryDelay = Duration(seconds: 2);
+  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -57,29 +64,100 @@ class _PlayerPageState extends State<PlayerPage> {
     // 创建新控制器
     debugPrint("⚠️ 播放页面：预览控制器不可用，创建新控制器");
     _isUsingPreviewController = false;
+    _retryCount = 0; // 重置重试计数
+
+    _attemptInitialize();
+  }
+
+  // 🎯 新增：尝试初始化的方法
+  void _attemptInitialize() {
+    if (_retryCount > 0) {
+      debugPrint("🔄 播放页面：第 $_retryCount 次重试 ${widget.channel.name}");
+    } else {
+      debugPrint("🚀 播放页面：开始初始化 ${widget.channel.name}");
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = _retryCount > 0
+          ? "连接失败，正在重试 ($_retryCount/$_maxRetries)..."
+          : null;
+    });
 
     _controller = VideoPlayerController.networkUrl(
       Uri.parse(widget.channel.url),
-    )
-      ..initialize().then((_) {
-        if (!mounted) return;
-        setState(() {
-          _isLoading = false;
-        });
-        _controller.play();
-      }).catchError((error) {
-        if (!mounted) return;
-        setState(() {
-          _isLoading = false;
-          _errorMessage = error.toString();
-        });
-        debugPrint("Video Player Error: $error");
+    );
+
+    _controller.initialize().then((_) {
+      if (!mounted) return;
+
+      // 🎯 成功初始化，重置重试计数
+      _retryCount = 0;
+      _retryTimer?.cancel();
+
+      setState(() {
+        _isLoading = false;
+        _errorMessage = null;
       });
+      _controller.play();
+
+      debugPrint("✅ 播放页面：初始化成功 ${widget.channel.name}");
+    }).catchError((error) {
+      if (!mounted) return;
+
+      debugPrint("❌ 播放页面：初始化失败 ${widget.channel.name}: $error");
+
+      // 🎯 初始化失败，触发重试
+      _handleInitializationFailure();
+    });
+  }
+
+  // 🎯 新增：处理初始化失败的方法
+  void _handleInitializationFailure() {
+    // 检查是否还能重试
+    if (_retryCount < _maxRetries) {
+      _retryCount++;
+
+      setState(() {
+        _isLoading = true;
+        _errorMessage = "连接失败，正在重试 ($_retryCount/$_maxRetries)...";
+      });
+
+      debugPrint("🔄 播放页面：准备第 $_retryCount 次重试，等待 ${_retryDelay.inSeconds} 秒");
+
+      // 延迟后重试
+      _retryTimer?.cancel();
+      _retryTimer = Timer(_retryDelay, () {
+        if (!mounted) {
+          debugPrint("⚠️ 播放页面：重试取消（页面已卸载）");
+          return;
+        }
+
+        debugPrint("🔄 播放页面：开始第 $_retryCount 次重试");
+
+        // 释放旧控制器
+        try {
+          _controller.dispose();
+        } catch (e) {
+          debugPrint('⚠️ 播放页面：释放旧控制器失败: $e');
+        }
+
+        _attemptInitialize();
+      });
+    } else {
+      // 达到最大重试次数
+      debugPrint("❌ 播放页面：已达到最大重试次数 ($_maxRetries)");
+
+      setState(() {
+        _isLoading = false;
+        _errorMessage = "连接失败（已重试 $_maxRetries 次）";
+      });
+    }
   }
 
   @override
   void dispose() {
-    // 🎯 关键：不释放控制器，让预览页面接管
+    _retryTimer?.cancel();
     debugPrint("✅ 播放页面：保留控制器，准备返回");
     super.dispose();
   }
@@ -122,21 +200,31 @@ class _PlayerPageState extends State<PlayerPage> {
   // 🎯 处理返回操作
   void _handleBack() {
     _exitFullScreen();
+    _retryTimer?.cancel(); // 取消重试
     final controller = _prepareControllerForReturn();
     Navigator.of(context).pop(controller);
+  }
+
+  // 🎯 新增：手动重试方法
+  void _manualRetry() {
+    _retryCount = 0; // 重置计数，重新开始
+    try {
+      _controller.dispose();
+    } catch (e) {
+      debugPrint('⚠️ 播放页面：释放控制器失败: $e');
+    }
+    _attemptInitialize();
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false, // ✅ 阻止自动弹出，我们手动处理
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) {
-        // ✅ 如果已经弹出，只需退出全屏
         if (didPop) {
           _exitFullScreen();
           return;
         }
-        // ✅ 如果没有弹出，手动处理返回逻辑
         _handleBack();
       },
       child: Scaffold(
@@ -154,11 +242,27 @@ class _PlayerPageState extends State<PlayerPage> {
                     const CircularProgressIndicator(),
                     const SizedBox(height: 16),
                     Text(
-                      _isUsingPreviewController
+                      _errorMessage ?? (_isUsingPreviewController
                           ? '正在从预览切换...'
-                          : '正在加载...',
-                      style: const TextStyle(color: Colors.white70),
+                          : '正在加载...'),
+                      style: TextStyle(
+                        color: _retryCount > 0
+                            ? Colors.orange
+                            : Colors.white70,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
+                    // 🎯 显示重试进度
+                    if (_retryCount > 0) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '重试 $_retryCount/$_maxRetries',
+                        style: const TextStyle(
+                          color: Colors.orange,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ],
                 )
                     : _controller.value.isInitialized
@@ -186,7 +290,7 @@ class _PlayerPageState extends State<PlayerPage> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        '错误详情: $_errorMessage',
+                        _errorMessage ?? '未知错误',
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: Colors.red,
@@ -194,9 +298,35 @@ class _PlayerPageState extends State<PlayerPage> {
                         ),
                       ),
                       const SizedBox(height: 24),
-                      ElevatedButton(
-                        onPressed: _handleBack,
-                        child: const Text('返回'),
+                      // 🎯 添加重试按钮
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: _manualRetry,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('重试'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 12,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          ElevatedButton.icon(
+                            onPressed: _handleBack,
+                            icon: const Icon(Icons.arrow_back),
+                            label: const Text('返回'),
+                            style: ElevatedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 12,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -267,6 +397,25 @@ class _PlayerPageState extends State<PlayerPage> {
                                       '无缝切换',
                                       style: TextStyle(
                                         color: Colors.green,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              // 🎯 显示重试信息
+                              if (!_isUsingPreviewController && _retryCount > 0)
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.refresh,
+                                      color: Colors.orange,
+                                      size: 12,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '已重试 $_retryCount 次',
+                                      style: const TextStyle(
+                                        color: Colors.orange,
                                         fontSize: 12,
                                       ),
                                     ),

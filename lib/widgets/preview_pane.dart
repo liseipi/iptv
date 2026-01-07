@@ -1,4 +1,4 @@
-// lib/widgets/preview_pane.dart (修复版 - 解决连接失败后无法切换的问题)
+// lib/widgets/preview_pane.dart (添加重试机制 - 最多尝试3次)
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
@@ -22,6 +22,12 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
   bool _isPaused = false;
   String? _errorMessage;
   int _controllerVersion = 0;
+
+  // 🎯 新增：重试相关变量
+  int _retryCount = 0;
+  static const int _maxRetries = 3;
+  static const Duration _retryDelay = Duration(seconds: 2);
+  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -53,18 +59,19 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
   void _switchChannel(Channel newChannel) {
     debugPrint("🔄 预览面板：开始切换频道 ${newChannel.name}");
 
-    // 🎯 关键修复1：立即取消所有计时器
+    // 取消所有计时器
     _debounce?.cancel();
     _initTimeout?.cancel();
+    _retryTimer?.cancel();
 
-    // 🎯 关键修复2：增加版本号，使旧的异步操作失效
+    // 🎯 重置重试计数
+    _retryCount = 0;
+
     _controllerVersion++;
     final currentVersion = _controllerVersion;
 
-    // 🎯 关键修复3：保存旧控制器的引用
     final oldController = _controller;
 
-    // 🎯 关键修复4：立即清空状态和控制器引用
     setState(() {
       _controller = null;
       _isInitializing = true;
@@ -72,10 +79,8 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       _currentChannel = newChannel;
     });
 
-    // 🎯 关键修复5：同步停止并释放旧控制器（包括失败的）
     if (oldController != null) {
       try {
-        // 先暂停
         if (oldController.value.isInitialized) {
           oldController.pause();
         }
@@ -83,7 +88,6 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         debugPrint('⚠️ 预览面板：暂停旧控制器失败: $e');
       }
 
-      // 延迟释放，避免阻塞UI
       Future.delayed(const Duration(milliseconds: 50), () {
         try {
           oldController.dispose();
@@ -94,9 +98,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       });
     }
 
-    // 🎯 关键修复6：使用防抖，避免快速切换
     _debounce = Timer(const Duration(milliseconds: 300), () {
-      // 检查版本号，防止过期操作
       if (currentVersion != _controllerVersion) {
         debugPrint("⚠️ 预览面板：操作已过期，跳过初始化");
         return;
@@ -122,14 +124,20 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       return;
     }
 
-    debugPrint("🚀 预览面板：开始初始化 ${channel.name}");
+    // 🎯 显示当前尝试次数
+    if (_retryCount > 0) {
+      debugPrint("🔄 预览面板：第 $_retryCount 次重试 ${channel.name}");
+    } else {
+      debugPrint("🚀 预览面板：开始初始化 ${channel.name}");
+    }
 
     setState(() {
       _isInitializing = true;
-      _errorMessage = null;
+      _errorMessage = _retryCount > 0
+          ? "连接失败，正在重试 ($_retryCount/$_maxRetries)..."
+          : null;
     });
 
-    // 🎯 关键修复7：创建新控制器前确保旧的已清理
     VideoPlayerController newController;
     try {
       newController = VideoPlayerController.networkUrl(
@@ -141,16 +149,12 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       );
     } catch (e) {
       debugPrint("❌ 预览面板：创建控制器失败: $e");
-      setState(() {
-        _errorMessage = "创建播放器失败";
-        _isInitializing = false;
-      });
+      _handleInitializationFailure(channel, currentVersion);
       return;
     }
 
     _controller = newController;
 
-    // 🎯 关键修复8：设置合理的超时时间（8秒）
     _initTimeout?.cancel();
     _initTimeout = Timer(const Duration(seconds: 8), () {
       if (!mounted) return;
@@ -161,30 +165,12 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
         debugPrint("⏱️ 预览面板：初始化超时 ${channel.name}");
 
-        setState(() {
-          _errorMessage = "连接超时";
-          _isInitializing = false;
-        });
-
-        // 🎯 关键修复9：超时后立即清理失败的控制器
-        if (_controller == newController) {
-          _controller = null;
-        }
-
-        Future.delayed(const Duration(milliseconds: 50), () {
-          try {
-            newController.dispose();
-            debugPrint("✅ 预览面板：已释放超时控制器");
-          } catch (e) {
-            debugPrint('⚠️ 预览面板：释放超时控制器失败: $e');
-          }
-        });
+        // 🎯 超时也算失败，触发重试
+        _handleInitializationFailure(channel, currentVersion);
       }
     });
 
-    // 🎯 关键修复10：初始化控制器
     newController.initialize().then((_) {
-      // 双重检查：版本号和挂载状态
       if (!mounted || currentVersion != _controllerVersion) {
         debugPrint("⚠️ 预览面板：页面已卸载或版本不匹配，清理控制器");
         Future.delayed(const Duration(milliseconds: 50), () {
@@ -197,7 +183,6 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         return;
       }
 
-      // 确认这个控制器还是当前控制器
       if (newController != _controller) {
         debugPrint("⚠️ 预览面板：控制器已被替换，清理旧控制器");
         Future.delayed(const Duration(milliseconds: 50), () {
@@ -211,6 +196,9 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       }
 
       _initTimeout?.cancel();
+
+      // 🎯 成功初始化，重置重试计数
+      _retryCount = 0;
 
       setState(() {
         _isInitializing = false;
@@ -254,25 +242,61 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       _initTimeout?.cancel();
 
-      setState(() {
-        _errorMessage = "加载失败";
-        _isInitializing = false;
-      });
+      // 🎯 初始化失败，触发重试
+      _handleInitializationFailure(channel, currentVersion);
+    });
+  }
 
-      // 🎯 关键修复11：失败后立即清理控制器
-      if (_controller == newController) {
-        _controller = null;
-      }
+  // 🎯 新增：处理初始化失败的方法
+  void _handleInitializationFailure(Channel channel, int version) {
+    final oldController = _controller;
 
+    if (oldController != null) {
+      _controller = null;
       Future.delayed(const Duration(milliseconds: 50), () {
         try {
-          newController.dispose();
+          oldController.dispose();
           debugPrint("✅ 预览面板：已释放失败的控制器");
         } catch (e) {
           debugPrint('⚠️ 预览面板：释放失败控制器错误: $e');
         }
       });
-    });
+    }
+
+    // 检查是否还能重试
+    if (_retryCount < _maxRetries) {
+      _retryCount++;
+
+      setState(() {
+        _isInitializing = true;
+        _errorMessage = "连接失败，正在重试 ($_retryCount/$_maxRetries)...";
+      });
+
+      debugPrint("🔄 预览面板：准备第 $_retryCount 次重试，等待 ${_retryDelay.inSeconds} 秒");
+
+      // 延迟后重试
+      _retryTimer?.cancel();
+      _retryTimer = Timer(_retryDelay, () {
+        if (!mounted || version != _controllerVersion) {
+          debugPrint("⚠️ 预览面板：重试取消（页面已卸载或频道已切换）");
+          return;
+        }
+
+        debugPrint("🔄 预览面板：开始第 $_retryCount 次重试");
+        _initializePlayerForChannel(channel, version);
+      });
+    } else {
+      // 达到最大重试次数
+      debugPrint("❌ 预览面板：已达到最大重试次数 ($_maxRetries)");
+
+      setState(() {
+        _errorMessage = "加载失败（已重试 $_maxRetries 次）";
+        _isInitializing = false;
+      });
+
+      // 重置重试计数，以便下次切换频道时重新开始
+      _retryCount = 0;
+    }
   }
 
   VideoPlayerController? prepareControllerForPlayback() {
@@ -283,7 +307,6 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       final controllerToPass = _controller;
       _controller = null;
       _isPaused = true;
-      // setState(() {});
 
       return controllerToPass;
     }
@@ -297,6 +320,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
     _debounce?.cancel();
     _initTimeout?.cancel();
+    _retryTimer?.cancel();
 
     if (returnedController != null &&
         returnedController.value.isInitialized &&
@@ -319,6 +343,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       _isPaused = false;
       _isInitializing = false;
       _errorMessage = null;
+      _retryCount = 0; // 重置重试计数
 
       setState(() {});
 
@@ -336,6 +361,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       _isPaused = false;
       _controller = null;
+      _retryCount = 0; // 重置重试计数
 
       if (_currentChannel != null) {
         _controllerVersion++;
@@ -347,6 +373,10 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
   void pausePreview() {
     debugPrint("⏸️ 预览面板：暂停预览");
     _isPaused = true;
+
+    // 🎯 暂停时取消重试
+    _retryTimer?.cancel();
+    _retryCount = 0;
 
     final oldController = _controller;
     _controller = null;
@@ -375,6 +405,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
   void resumePreview() {
     debugPrint("▶️ 预览面板：恢复预览");
     _isPaused = false;
+    _retryCount = 0; // 重置重试计数
 
     if (_controller != null && _controller!.value.isInitialized) {
       try {
@@ -396,6 +427,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
     _debounce?.cancel();
     _initTimeout?.cancel();
+    _retryTimer?.cancel();
 
     final controller = _controller;
     _controller = null;
@@ -470,7 +502,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
               const SizedBox(height: 5),
               Text(
                 _getStatusText(),
-                maxLines: 1,
+                maxLines: 2,
                 style: TextStyle(
                   color: _getStatusColor(),
                   fontSize: 16,
@@ -485,7 +517,12 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
   String _getStatusText() {
     if (_isPaused) return "预览已暂停";
-    if (_isInitializing) return "正在连接...";
+    if (_isInitializing) {
+      if (_retryCount > 0) {
+        return "连接失败，正在重试 ($_retryCount/$_maxRetries)...";
+      }
+      return "正在连接...";
+    }
     if (_errorMessage != null) return "$_errorMessage (可切换其他频道)";
     if (_controller != null && _controller!.value.isInitialized) {
       return "预览播放中 (点击确认可无缝切换)";
@@ -495,8 +532,13 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
   Color _getStatusColor() {
     if (_isPaused) return Colors.grey.shade400;
-    if (_isInitializing) return Colors.blue.shade300;
-    if (_errorMessage != null) return Colors.orange.shade300; // 改为橙色，提示可继续操作
+    if (_isInitializing) {
+      if (_retryCount > 0) {
+        return Colors.orange.shade300; // 重试时用橙色
+      }
+      return Colors.blue.shade300;
+    }
+    if (_errorMessage != null) return Colors.red.shade300;
     if (_controller != null && _controller!.value.isInitialized) {
       return Colors.green.shade300;
     }
@@ -521,15 +563,19 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     }
 
     if (_isInitializing) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
             Text(
-              "正在连接...",
-              style: TextStyle(color: Colors.white70),
+              _retryCount > 0
+                  ? "正在重试... ($_retryCount/$_maxRetries)"
+                  : "正在连接...",
+              style: TextStyle(
+                color: _retryCount > 0 ? Colors.orange : Colors.white70,
+              ),
             ),
           ],
         ),
@@ -541,11 +587,12 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.signal_wifi_off, size: 64, color: Colors.orange),
+            const Icon(Icons.error_outline, size: 64, color: Colors.red),
             const SizedBox(height: 16),
             Text(
               _errorMessage!,
-              style: const TextStyle(color: Colors.orange),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.red),
             ),
             const SizedBox(height: 8),
             const Text(
