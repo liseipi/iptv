@@ -97,6 +97,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _isLoading = false;
         _errorMessage = null;
       });
+
+      // 🎯 新增：检查是否使用了缓存，并显示提示
+      final cacheTime = await IptvService.getCacheTimeInfo();
+      if (cacheTime != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('频道列表更新于: $cacheTime'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.blue.shade700,
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
