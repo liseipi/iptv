@@ -1,4 +1,4 @@
-// lib/main.dart (优化版 - 改进遥控器导航逻辑)
+// lib/main.dart (优化版 - 优先使用缓存 + 友好的提示方式)
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -48,6 +48,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _isLoading = true;
   String? _errorMessage;
 
+  // 🎯 新增：是否是首次加载（无缓存）
+  bool _isFirstLoad = true;
+
   // --- 焦点管理 ---
   final FocusScopeNode _categoryPaneFocusScope = FocusScopeNode();
   final FocusScopeNode _channelPaneFocusScope = FocusScopeNode();
@@ -77,55 +80,68 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadChannels() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  Future<void> _loadChannels({bool forceUpdate = false}) async {
+    // 🎯 改进：只在首次加载或强制更新时显示加载状态
+    if (_isFirstLoad || forceUpdate || _categories.isEmpty) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
 
     try {
-      final data = await IptvService.fetchAndGroupChannels();
+      final data = await IptvService.fetchAndGroupChannels(forceUpdate: forceUpdate);
       if (!mounted) return;
 
       setState(() {
         _groupedChannels = data;
         _categories = data.keys.toList();
-        if (_categories.isNotEmpty) {
+        if (_categories.isNotEmpty && _selectedCategory == null) {
           _selectedCategory = _categories.first;
           _focusedChannel = _groupedChannels[_selectedCategory]?.first;
         }
         _isLoading = false;
         _errorMessage = null;
+        _isFirstLoad = false;
       });
 
-      // 🎯 新增：检查是否使用了缓存，并显示提示
-      final cacheTime = await IptvService.getCacheTimeInfo();
-      if (cacheTime != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('频道列表更新于: $cacheTime'),
-            duration: const Duration(seconds: 3),
-            backgroundColor: Colors.blue.shade700,
-          ),
-        );
+      // 🎯 改进：只在强制更新或首次成功加载时显示提示
+      if (forceUpdate && mounted) {
+        _showToast('频道列表已更新', isError: false, duration: 2);
+      } else if (!_isFirstLoad && mounted) {
+        // 后台更新成功，显示简短提示
+        final cacheTime = await IptvService.getCacheTimeInfo();
+        if (cacheTime != null) {
+          _showToast('频道列表更新于 $cacheTime', isError: false, duration: 2);
+        }
       }
     } catch (e) {
       if (!mounted) return;
+
       setState(() {
         _isLoading = false;
         _errorMessage = e.toString();
+        _isFirstLoad = false;
       });
-      _showError('加载频道失败: $e');
+
+      // 🎯 改进：只在首次加载失败或强制更新失败时显示错误
+      if (forceUpdate || _categories.isEmpty) {
+        _showToast('加载失败: $e', isError: true, duration: 3);
+      }
     }
   }
 
-  void _showError(String message) {
+  /// 🎯 新增：显示短暂的Toast提示，不会一直显示
+  void _showToast(String message, {required bool isError, int duration = 2}) {
     if (mounted) {
+      ScaffoldMessenger.of(context).clearSnackBars(); // 清除之前的提示
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
-          duration: const Duration(seconds: 3),
-          action: SnackBarAction(label: '重试', onPressed: _loadChannels),
+          duration: Duration(seconds: duration),
+          backgroundColor: isError ? Colors.red.shade700 : Colors.blue.shade700,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(bottom: 80, left: 20, right: 20),
         ),
       );
     }
@@ -142,10 +158,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
-  // 🎯 改进1: 分类选中时自动选择第一个频道
-  // 🎯 新增参数: shouldResetChannel - 是否重置到第一个频道
   void _onCategorySelected(String category, {bool shouldResetChannel = true}) {
-    // 如果分类没有变化，不做任何操作
     if (_selectedCategory == category && !shouldResetChannel) {
       return;
     }
@@ -153,24 +166,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     setState(() {
       _selectedCategory = category;
 
-      // 🎯 关键修复: 只有在需要重置时才跳到第一个频道
       if (shouldResetChannel) {
         final channels = _groupedChannels[category];
         _focusedChannel = channels?.isNotEmpty == true ? channels!.first : null;
       }
-      // 如果不重置，保持当前焦点的频道
     });
 
-    // 🎯 只有在重置频道时才滚动到顶部
     if (shouldResetChannel) {
       Future.delayed(const Duration(milliseconds: 50), () {
         if (mounted) {
-          // 滚动到顶部
           if (_channelScrollController.hasClients) {
             _channelScrollController.jumpTo(0.0);
           }
 
-          // 如果当前频道面板有焦点，重新聚焦到第一个频道
           if (_channelPaneFocusScope.hasFocus) {
             _channelPaneFocusScope.requestFocus();
           }
@@ -224,9 +232,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       MaterialPageRoute(builder: (context) => const SettingsPage()),
     );
 
+    // 🎯 改进：设置返回后强制更新
     if (result == true) {
-      setState(() => _isLoading = true);
-      await _loadChannels();
+      await _loadChannels(forceUpdate: true);
     }
 
     if (mounted) {
@@ -252,7 +260,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
+    // 🎯 改进：只在首次加载且无缓存时显示加载界面
+    if (_isLoading && _categories.isEmpty) {
       return const Scaffold(
         body: Center(
           child: Column(
@@ -267,7 +276,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
     }
 
-    if (_categories.isEmpty) {
+    // 🎯 改进：只在首次加载失败且无缓存时显示错误界面
+    if (_categories.isEmpty && !_isLoading) {
       return Scaffold(
         body: Center(
           child: Column(
@@ -278,7 +288,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               Text(_errorMessage ?? "没有加载到频道数据"),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: _loadChannels,
+                onPressed: () => _loadChannels(forceUpdate: true),
                 child: const Text('重试'),
               ),
             ],
@@ -308,7 +318,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
           _MoveToCategoriesIntent: CallbackAction<_MoveToCategoriesIntent>(
             onInvoke: (_) {
-              // 🎯 改进2: 只有从频道面板或设置按钮才能左移到分类面板
               if (_channelPaneFocusScope.hasFocus || _settingsButtonFocus.hasFocus) {
                 _categoryPaneFocusScope.requestFocus();
               }
@@ -319,22 +328,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onInvoke: (_) {
               final currentFocus = FocusManager.instance.primaryFocus;
 
-              // 🎯 改进3: 二级分类(频道面板)限制上移
               if (_channelPaneFocusScope.hasFocus) {
-                // 尝试在频道列表内部上移
                 bool canMoveUp = currentFocus?.focusInDirection(TraversalDirection.up) ?? false;
-                // 如果已经在频道列表顶部,不做任何操作(不移动到设置)
                 return null;
               }
 
-              // 🎯 改进4: 一级分类(分类面板)可以上移到设置
               if (_categoryPaneFocusScope.hasFocus) {
-                // 先尝试在分类面板内部上移
                 bool canMoveUp = currentFocus?.focusInDirection(TraversalDirection.up) ?? false;
 
-                // 🎯 关键修复: 如果无法在面板内上移(已经在顶部)，则跳转到设置按钮
                 if (!canMoveUp) {
-                  // 延迟一帧确保焦点系统处理完成
                   Future.delayed(const Duration(milliseconds: 50), () {
                     if (mounted) {
                       _settingsButtonFocus.requestFocus();
@@ -396,7 +398,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             focusNode: _settingsButtonFocus,
                             onKeyEvent: (node, event) {
                               if (event is KeyDownEvent) {
-                                // 🎯 改进5: 设置按钮下移时,优先回到分类面板
                                 if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
                                   _categoryPaneFocusScope.requestFocus();
                                   return KeyEventResult.handled;
@@ -409,9 +410,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               }
                               return KeyEventResult.ignored;
                             },
-                            // 🎯 关键修复: 添加 onFocusChange 回调确保焦点变化立即响应
                             onFocusChange: (hasFocus) {
-                              // 触发重建以更新按钮样式
                               if (mounted) {
                                 setState(() {});
                               }

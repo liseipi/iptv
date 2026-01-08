@@ -1,4 +1,4 @@
-// lib/widgets/preview_pane.dart (添加重试机制 - 最多尝试3次)
+// lib/widgets/preview_pane.dart (优化版 - 改进重试逻辑和控制器释放顺序)
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
@@ -23,7 +23,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
   String? _errorMessage;
   int _controllerVersion = 0;
 
-  // 🎯 新增：重试相关变量
+  // 重试相关变量
   int _retryCount = 0;
   static const int _maxRetries = 3;
   static const Duration _retryDelay = Duration(seconds: 2);
@@ -64,7 +64,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     _initTimeout?.cancel();
     _retryTimer?.cancel();
 
-    // 🎯 重置重试计数
+    // 重置重试计数
     _retryCount = 0;
 
     _controllerVersion++;
@@ -88,9 +88,9 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         debugPrint('⚠️ 预览面板：暂停旧控制器失败: $e');
       }
 
-      Future.delayed(const Duration(milliseconds: 50), () {
+      Future.delayed(const Duration(milliseconds: 50), () async {
         try {
-          oldController.dispose();
+          await oldController.dispose();
           debugPrint("✅ 预览面板：已释放旧控制器");
         } catch (e) {
           debugPrint('⚠️ 预览面板：释放旧控制器失败: $e');
@@ -124,7 +124,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       return;
     }
 
-    // 🎯 显示当前尝试次数
+    // 显示当前尝试次数
     if (_retryCount > 0) {
       debugPrint("🔄 预览面板：第 $_retryCount 次重试 ${channel.name}");
     } else {
@@ -165,7 +165,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
         debugPrint("⏱️ 预览面板：初始化超时 ${channel.name}");
 
-        // 🎯 超时也算失败，触发重试
+        // 超时也算失败，触发重试
         _handleInitializationFailure(channel, currentVersion);
       }
     });
@@ -173,9 +173,9 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     newController.initialize().then((_) {
       if (!mounted || currentVersion != _controllerVersion) {
         debugPrint("⚠️ 预览面板：页面已卸载或版本不匹配，清理控制器");
-        Future.delayed(const Duration(milliseconds: 50), () {
+        Future.delayed(const Duration(milliseconds: 50), () async {
           try {
-            newController.dispose();
+            await newController.dispose();
           } catch (e) {
             debugPrint('⚠️ 预览面板：清理过期控制器失败: $e');
           }
@@ -185,9 +185,9 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       if (newController != _controller) {
         debugPrint("⚠️ 预览面板：控制器已被替换，清理旧控制器");
-        Future.delayed(const Duration(milliseconds: 50), () {
+        Future.delayed(const Duration(milliseconds: 50), () async {
           try {
-            newController.dispose();
+            await newController.dispose();
           } catch (e) {
             debugPrint('⚠️ 预览面板：清理被替换控制器失败: $e');
           }
@@ -197,7 +197,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       _initTimeout?.cancel();
 
-      // 🎯 成功初始化，重置重试计数
+      // 成功初始化，重置重试计数
       _retryCount = 0;
 
       setState(() {
@@ -219,9 +219,9 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       debugPrint("❌ 预览面板：初始化失败 ${channel.name}: $error");
 
       if (!mounted || currentVersion != _controllerVersion) {
-        Future.delayed(const Duration(milliseconds: 50), () {
+        Future.delayed(const Duration(milliseconds: 50), () async {
           try {
-            newController.dispose();
+            await newController.dispose();
           } catch (e) {
             debugPrint('⚠️ 预览面板：清理失败控制器错误: $e');
           }
@@ -230,9 +230,9 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       }
 
       if (newController != _controller) {
-        Future.delayed(const Duration(milliseconds: 50), () {
+        Future.delayed(const Duration(milliseconds: 50), () async {
           try {
-            newController.dispose();
+            await newController.dispose();
           } catch (e) {
             debugPrint('⚠️ 预览面板：清理失败控制器错误: $e');
           }
@@ -242,43 +242,61 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       _initTimeout?.cancel();
 
-      // 🎯 初始化失败，触发重试
+      // 初始化失败，触发重试
       _handleInitializationFailure(channel, currentVersion);
     });
   }
 
-  // 🎯 新增：处理初始化失败的方法
+  // 🎯 优化：处理初始化失败的方法 - 改进释放和重试顺序
   void _handleInitializationFailure(Channel channel, int version) {
-    final oldController = _controller;
-
-    if (oldController != null) {
-      _controller = null;
-      Future.delayed(const Duration(milliseconds: 50), () {
-        try {
-          oldController.dispose();
-          debugPrint("✅ 预览面板：已释放失败的控制器");
-        } catch (e) {
-          debugPrint('⚠️ 预览面板：释放失败控制器错误: $e');
-        }
-      });
-    }
-
     // 检查是否还能重试
     if (_retryCount < _maxRetries) {
       _retryCount++;
+
+      debugPrint("🔄 预览面板：准备第 $_retryCount 次重试，等待 ${_retryDelay.inSeconds} 秒");
 
       setState(() {
         _isInitializing = true;
         _errorMessage = "连接失败，正在重试 ($_retryCount/$_maxRetries)...";
       });
 
-      debugPrint("🔄 预览面板：准备第 $_retryCount 次重试，等待 ${_retryDelay.inSeconds} 秒");
+      // 🎯 关键修复：先保存旧控制器引用，清空当前控制器
+      final oldController = _controller;
+      _controller = null;
 
       // 延迟后重试
       _retryTimer?.cancel();
-      _retryTimer = Timer(_retryDelay, () {
+      _retryTimer = Timer(_retryDelay, () async {
         if (!mounted || version != _controllerVersion) {
           debugPrint("⚠️ 预览面板：重试取消（页面已卸载或频道已切换）");
+
+          // 清理控制器
+          if (oldController != null) {
+            try {
+              await oldController.dispose();
+              debugPrint("✅ 预览面板：已清理取消重试的控制器");
+            } catch (e) {
+              debugPrint('⚠️ 预览面板：清理控制器失败: $e');
+            }
+          }
+          return;
+        }
+
+        // 🎯 在重试前先彻底释放旧控制器
+        if (oldController != null) {
+          try {
+            await oldController.dispose();
+            debugPrint("✅ 预览面板：已释放失败的控制器，准备重试");
+          } catch (e) {
+            debugPrint('⚠️ 预览面板：释放失败控制器错误: $e');
+          }
+        }
+
+        // 🎯 等待一小段时间确保资源完全释放
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        if (!mounted || version != _controllerVersion) {
+          debugPrint("⚠️ 预览面板：重试前检查失败");
           return;
         }
 
@@ -288,6 +306,21 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     } else {
       // 达到最大重试次数
       debugPrint("❌ 预览面板：已达到最大重试次数 ($_maxRetries)");
+
+      // 🎯 清理失败的控制器
+      final oldController = _controller;
+      _controller = null;
+
+      if (oldController != null) {
+        Future.delayed(const Duration(milliseconds: 50), () async {
+          try {
+            await oldController.dispose();
+            debugPrint("✅ 预览面板：已释放最终失败的控制器");
+          } catch (e) {
+            debugPrint('⚠️ 预览面板：释放最终失败控制器错误: $e');
+          }
+        });
+      }
 
       setState(() {
         _errorMessage = "加载失败（已重试 $_maxRetries 次）";
@@ -330,9 +363,9 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       final oldController = _controller;
       if (oldController != null && oldController != returnedController) {
-        Future.delayed(const Duration(milliseconds: 50), () {
+        Future.delayed(const Duration(milliseconds: 50), () async {
           try {
-            oldController.dispose();
+            await oldController.dispose();
           } catch (e) {
             debugPrint('⚠️ 预览面板：释放旧控制器失败: $e');
           }
@@ -343,7 +376,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       _isPaused = false;
       _isInitializing = false;
       _errorMessage = null;
-      _retryCount = 0; // 重置重试计数
+      _retryCount = 0;
 
       setState(() {});
 
@@ -361,7 +394,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       _isPaused = false;
       _controller = null;
-      _retryCount = 0; // 重置重试计数
+      _retryCount = 0;
 
       if (_currentChannel != null) {
         _controllerVersion++;
@@ -374,7 +407,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     debugPrint("⏸️ 预览面板：暂停预览");
     _isPaused = true;
 
-    // 🎯 暂停时取消重试
+    // 暂停时取消重试
     _retryTimer?.cancel();
     _retryCount = 0;
 
@@ -390,9 +423,9 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         debugPrint('⚠️ 预览面板：暂停控制器失败: $e');
       }
 
-      Future.delayed(const Duration(milliseconds: 100), () {
+      Future.delayed(const Duration(milliseconds: 100), () async {
         try {
-          oldController.dispose();
+          await oldController.dispose();
         } catch (e) {
           debugPrint('⚠️ 预览面板：释放暂停控制器失败: $e');
         }
@@ -405,7 +438,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
   void resumePreview() {
     debugPrint("▶️ 预览面板：恢复预览");
     _isPaused = false;
-    _retryCount = 0; // 重置重试计数
+    _retryCount = 0;
 
     if (_controller != null && _controller!.value.isInitialized) {
       try {
@@ -534,7 +567,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     if (_isPaused) return Colors.grey.shade400;
     if (_isInitializing) {
       if (_retryCount > 0) {
-        return Colors.orange.shade300; // 重试时用橙色
+        return Colors.orange.shade300;
       }
       return Colors.blue.shade300;
     }

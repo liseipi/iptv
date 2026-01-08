@@ -1,4 +1,4 @@
-// lib/services/iptv_service.dart (增强版 - 3次重试 + 本地缓存)
+// lib/services/iptv_service.dart (优化版 - 启动时优先使用缓存 + 后台静默更新)
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -30,6 +30,9 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
   static const int _maxRetries = 3;
   static const Duration _retryDelay = Duration(seconds: 2);
 
+  // 🎯 新增：后台更新状态回调
+  static Function(String message, bool isError)? _updateCallback;
+
   // 创建支持代理的 HTTP 客户端
   static Future<http.Client> _createHttpClient() async {
     final proxyManager = await ProxyManager.getInstance();
@@ -38,7 +41,6 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
     if (proxyUrl != null) {
       final httpClient = HttpClient();
 
-      // 🎯 修改：使用 getProxyString 方法
       httpClient.findProxy = (uri) {
         return proxyManager.getProxyString();
       };
@@ -52,7 +54,7 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
     return http.Client();
   }
 
-  /// 🎯 新增：保存 M3U 内容到本地缓存
+  /// 保存 M3U 内容到本地缓存
   static Future<void> _saveCachedM3u(String content) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -64,7 +66,7 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
     }
   }
 
-  /// 🎯 新增：从本地缓存读取 M3U 内容
+  /// 从本地缓存读取 M3U 内容
   static Future<String?> _loadCachedM3u() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -86,7 +88,7 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
     }
   }
 
-  /// 🎯 新增：获取缓存时间信息（用于UI显示）
+  /// 获取缓存时间信息（用于UI显示）
   static Future<String?> getCacheTimeInfo() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -112,7 +114,7 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
     }
   }
 
-  /// 🎯 改进：带重试机制的远程请求
+  /// 带重试机制的远程请求
   static Future<String?> _fetchRemoteM3uWithRetry() async {
     http.Client? client;
 
@@ -133,7 +135,7 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
           final content = utf8.decode(response.bodyBytes);
           print('✅ IptvService: 第 $attempt 次请求成功 (${content.length} 字节)');
 
-          // 🎯 请求成功，保存到缓存
+          // 请求成功，保存到缓存
           await _saveCachedM3u(content);
 
           return content;
@@ -174,8 +176,27 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
     return null;
   }
 
-  /// 主入口：根据配置选择本地测试源还是远程源
-  static Future<List<Channel>> fetchAndParseM3u() async {
+  /// 🎯 新增：后台静默更新远程源
+  static Future<void> updateSourceInBackground(Function(String message, bool isError)? callback) async {
+    _updateCallback = callback;
+
+    print('🔄 IptvService: 开始后台更新频道源...');
+
+    final remoteContent = await _fetchRemoteM3uWithRetry();
+
+    if (remoteContent != null) {
+      print('✅ IptvService: 后台更新成功');
+      _updateCallback?.call('频道列表已更新', false);
+    } else {
+      print('⚠️ IptvService: 后台更新失败,继续使用缓存');
+      _updateCallback?.call('更新失败,使用缓存数据', true);
+    }
+
+    _updateCallback = null;
+  }
+
+  /// 🎯 改进：主入口 - 优先使用缓存，后台更新
+  static Future<List<Channel>> fetchAndParseM3u({bool forceUpdate = false}) async {
     try {
       String m3uContent;
 
@@ -183,33 +204,39 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
         print('📝 IptvService: 使用本地测试源');
         m3uContent = localTestM3uContent;
       } else {
-        // 🎯 尝试远程请求（带重试）
-        final remoteContent = await _fetchRemoteM3uWithRetry();
+        // 🎯 优先尝试读取缓存
+        final cachedContent = await _loadCachedM3u();
 
-        if (remoteContent != null) {
-          // 远程请求成功
-          m3uContent = remoteContent;
+        if (!forceUpdate && cachedContent != null && cachedContent.isNotEmpty) {
+          // 有缓存，立即使用
+          print('✅ IptvService: 使用缓存内容,后台将更新源');
+          m3uContent = cachedContent;
+
+          // 🎯 后台异步更新（不阻塞界面）
+          updateSourceInBackground(null);
+
         } else {
-          // 🎯 所有远程请求都失败，尝试使用缓存
-          print('⚠️ IptvService: 远程请求失败，尝试使用缓存...');
+          // 无缓存或强制更新，才显示加载
+          print('🔄 IptvService: ${forceUpdate ? "强制" : "首次"}更新频道源...');
 
-          final cachedContent = await _loadCachedM3u();
+          final remoteContent = await _fetchRemoteM3uWithRetry();
 
-          if (cachedContent != null && cachedContent.isNotEmpty) {
-            print('✅ IptvService: 使用缓存的 M3U 内容');
-            m3uContent = cachedContent;
-
-            // 🎯 提示用户正在使用缓存
-            // 这里可以通过回调或全局状态通知UI显示提示
+          if (remoteContent != null) {
+            m3uContent = remoteContent;
           } else {
-            print('❌ IptvService: 没有可用的缓存，无法加载频道列表');
-            throw Exception(
-                '网络连接失败且无缓存数据\n'
-                    '已重试 $_maxRetries 次，请检查：\n'
-                    '1. 网络连接是否正常\n'
-                    '2. 代理设置是否正确\n'
-                    '3. 远程服务器是否可访问'
-            );
+            // 远程请求失败
+            if (cachedContent != null && cachedContent.isNotEmpty) {
+              // 有缓存，降级使用缓存
+              print('⚠️ IptvService: 远程请求失败，使用缓存');
+              m3uContent = cachedContent;
+            } else {
+              // 无缓存，抛出异常
+              print('❌ IptvService: 无法获取频道列表');
+              throw Exception(
+                  '无法加载频道列表\n'
+                      '请检查网络连接或代理设置'
+              );
+            }
           }
         }
       }
@@ -217,7 +244,7 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
       return _parseM3u(m3uContent);
 
     } catch (e) {
-      if (e.toString().contains('网络连接失败且无缓存数据')) {
+      if (e.toString().contains('无法加载频道列表')) {
         rethrow;
       }
       throw Exception('加载频道列表失败: $e');
@@ -225,8 +252,8 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
   }
 
   /// 返回分组后的频道 Map
-  static Future<Map<String, List<Channel>>> fetchAndGroupChannels() async {
-    final channels = await fetchAndParseM3u();
+  static Future<Map<String, List<Channel>>> fetchAndGroupChannels({bool forceUpdate = false}) async {
+    final channels = await fetchAndParseM3u(forceUpdate: forceUpdate);
 
     final Map<String, List<Channel>> groupedChannels = {};
 
@@ -281,7 +308,7 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
     return match?.group(1) ?? '';
   }
 
-  /// 🎯 新增：清除缓存（供设置页面调用）
+  /// 清除缓存（供设置页面调用）
   static Future<void> clearCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
