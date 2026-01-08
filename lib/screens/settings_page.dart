@@ -1,7 +1,8 @@
-// lib/screens/settings_page.dart (完全修复版 - 解决禁用状态下的焦点问题)
+// lib/screens/settings_page.dart (添加代理类型选择)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/proxy_manager.dart';
+import '../services/iptv_service.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -15,20 +16,26 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _isLoading = true;
 
   bool _proxyEnabled = false;
+  ProxyType _proxyType = ProxyType.http; // 🎯 新增
   final TextEditingController _hostController = TextEditingController();
   final TextEditingController _portController = TextEditingController();
 
   final FocusNode _backButtonFocus = FocusNode();
   final FocusNode _enableSwitchFocus = FocusNode();
+  final FocusNode _typeSelectFocus = FocusNode(); // 🎯 新增
   final FocusNode _hostFocus = FocusNode();
   final FocusNode _portFocus = FocusNode();
   final FocusNode _saveFocus = FocusNode();
   final FocusNode _cancelFocus = FocusNode();
+  final FocusNode _clearCacheFocus = FocusNode();
+
+  String? _cacheTimeInfo;
 
   @override
   void initState() {
     super.initState();
     _loadProxySettings();
+    _loadCacheInfo();
   }
 
   Future<void> _loadProxySettings() async {
@@ -36,17 +43,26 @@ class _SettingsPageState extends State<SettingsPage> {
 
     setState(() {
       _proxyEnabled = _proxyManager.isProxyEnabled;
+      _proxyType = _proxyManager.proxyType; // 🎯 加载类型
       _hostController.text = _proxyManager.proxyHost;
       _portController.text = _proxyManager.proxyPort.toString();
       _isLoading = false;
     });
 
-    // 延迟聚焦，确保界面已渲染
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) {
         _enableSwitchFocus.requestFocus();
       }
     });
+  }
+
+  Future<void> _loadCacheInfo() async {
+    final cacheTime = await IptvService.getCacheTimeInfo();
+    if (mounted) {
+      setState(() {
+        _cacheTimeInfo = cacheTime;
+      });
+    }
   }
 
   Future<void> _saveProxySettings() async {
@@ -61,6 +77,7 @@ class _SettingsPageState extends State<SettingsPage> {
       enabled: _proxyEnabled,
       host: _hostController.text,
       port: port,
+      type: _proxyType, // 🎯 保存类型
     );
 
     if (mounted) {
@@ -70,6 +87,16 @@ class _SettingsPageState extends State<SettingsPage> {
           Navigator.of(context).pop(true);
         }
       });
+    }
+  }
+
+  Future<void> _clearCache() async {
+    await IptvService.clearCache();
+    if (mounted) {
+      setState(() {
+        _cacheTimeInfo = null;
+      });
+      _showMessage('缓存已清除');
     }
   }
 
@@ -89,10 +116,12 @@ class _SettingsPageState extends State<SettingsPage> {
     _portController.dispose();
     _backButtonFocus.dispose();
     _enableSwitchFocus.dispose();
+    _typeSelectFocus.dispose(); // 🎯 新增
     _hostFocus.dispose();
     _portFocus.dispose();
     _saveFocus.dispose();
     _cancelFocus.dispose();
+    _clearCacheFocus.dispose();
     super.dispose();
   }
 
@@ -108,10 +137,10 @@ class _SettingsPageState extends State<SettingsPage> {
       backgroundColor: Colors.black,
       body: Column(
         children: [
-          // 顶部导航栏
+          // 顶部导航栏（保持不变）
           Container(
-            height: 60,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            height: 50,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             decoration: BoxDecoration(
               color: Colors.grey.shade900,
               border: Border(
@@ -123,7 +152,6 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             child: Row(
               children: [
-                // 返回按钮
                 Focus(
                   focusNode: _backButtonFocus,
                   onKeyEvent: (node, event) {
@@ -148,14 +176,14 @@ class _SettingsPageState extends State<SettingsPage> {
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                            horizontal: 10,
+                            vertical: 6,
                           ),
                           decoration: BoxDecoration(
                             color: isFocused
                                 ? Colors.blue.withValues(alpha: 0.8)
                                 : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(6),
                             border: Border.all(
                               color: isFocused ? Colors.white : Colors.transparent,
                               width: 2,
@@ -167,13 +195,14 @@ class _SettingsPageState extends State<SettingsPage> {
                               Icon(
                                 Icons.arrow_back,
                                 color: isFocused ? Colors.white : Colors.white70,
+                                size: 20,
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 6),
                               Text(
                                 '返回',
                                 style: TextStyle(
                                   color: isFocused ? Colors.white : Colors.white70,
-                                  fontSize: 18,
+                                  fontSize: 16,
                                   fontWeight: isFocused
                                       ? FontWeight.bold
                                       : FontWeight.normal,
@@ -186,12 +215,12 @@ class _SettingsPageState extends State<SettingsPage> {
                     },
                   ),
                 ),
-                const SizedBox(width: 20),
+                const SizedBox(width: 16),
                 const Text(
                   '代理设置',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 24,
+                    fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -204,12 +233,12 @@ class _SettingsPageState extends State<SettingsPage> {
             child: Center(
               child: SingleChildScrollView(
                 child: Container(
-                  constraints: const BoxConstraints(maxWidth: 700),
-                  padding: const EdgeInsets.all(40),
+                  constraints: const BoxConstraints(maxWidth: 600),
+                  padding: const EdgeInsets.all(30),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // 代理开关
+                      // 代理开关（保持不变）
                       InkWell(
                         focusNode: _enableSwitchFocus,
                         autofocus: false,
@@ -226,15 +255,15 @@ class _SettingsPageState extends State<SettingsPage> {
                             final isFocused = _enableSwitchFocus.hasFocus;
                             return AnimatedContainer(
                               duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.all(20),
+                              padding: const EdgeInsets.all(16),
                               decoration: BoxDecoration(
                                 color: isFocused
                                     ? Colors.blue.withValues(alpha: 0.3)
                                     : Colors.grey.shade900,
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
                                   color: isFocused ? Colors.blue : Colors.transparent,
-                                  width: 3,
+                                  width: 2,
                                 ),
                               ),
                               child: Row(
@@ -244,7 +273,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                     children: [
                                       AnimatedContainer(
                                         duration: const Duration(milliseconds: 300),
-                                        padding: const EdgeInsets.all(8),
+                                        padding: const EdgeInsets.all(6),
                                         decoration: BoxDecoration(
                                           color: _proxyEnabled
                                               ? Colors.green.withValues(alpha: 0.2)
@@ -258,10 +287,10 @@ class _SettingsPageState extends State<SettingsPage> {
                                           color: _proxyEnabled
                                               ? Colors.green
                                               : Colors.red,
-                                          size: 32,
+                                          size: 24,
                                         ),
                                       ),
-                                      const SizedBox(width: 16),
+                                      const SizedBox(width: 12),
                                       Column(
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
@@ -269,42 +298,41 @@ class _SettingsPageState extends State<SettingsPage> {
                                             '启用代理',
                                             style: TextStyle(
                                               color: Colors.white,
-                                              fontSize: 22,
+                                              fontSize: 18,
                                               fontWeight: isFocused
                                                   ? FontWeight.bold
                                                   : FontWeight.normal,
                                             ),
                                           ),
-                                          const SizedBox(height: 4),
+                                          const SizedBox(height: 2),
                                           Text(
                                             _proxyEnabled ? '代理已启用' : '代理已关闭',
                                             style: TextStyle(
                                               color: _proxyEnabled
                                                   ? Colors.green.shade300
                                                   : Colors.red.shade300,
-                                              fontSize: 14,
+                                              fontSize: 12,
                                             ),
                                           ),
                                         ],
                                       ),
                                     ],
                                   ),
-                                  // 开关视觉效果
                                   AnimatedContainer(
                                     duration: const Duration(milliseconds: 300),
-                                    width: 80,
-                                    height: 40,
+                                    width: 64,
+                                    height: 32,
                                     decoration: BoxDecoration(
                                       color: _proxyEnabled
                                           ? Colors.green
                                           : Colors.grey.shade700,
-                                      borderRadius: BorderRadius.circular(20),
+                                      borderRadius: BorderRadius.circular(16),
                                       boxShadow: _proxyEnabled
                                           ? [
                                         BoxShadow(
                                           color: Colors.green.withValues(alpha: 0.5),
-                                          blurRadius: 8,
-                                          spreadRadius: 2,
+                                          blurRadius: 6,
+                                          spreadRadius: 1,
                                         )
                                       ]
                                           : [],
@@ -314,26 +342,26 @@ class _SettingsPageState extends State<SettingsPage> {
                                         AnimatedPositioned(
                                           duration: const Duration(milliseconds: 300),
                                           curve: Curves.easeInOut,
-                                          left: _proxyEnabled ? 40 : 0,
+                                          left: _proxyEnabled ? 32 : 0,
                                           top: 0,
                                           bottom: 0,
                                           child: Container(
-                                            width: 40,
+                                            width: 32,
                                             decoration: BoxDecoration(
                                               color: Colors.white,
-                                              borderRadius: BorderRadius.circular(20),
+                                              borderRadius: BorderRadius.circular(16),
                                               boxShadow: [
                                                 BoxShadow(
                                                   color: Colors.black.withValues(alpha: 0.3),
-                                                  blurRadius: 4,
-                                                  offset: const Offset(0, 2),
+                                                  blurRadius: 3,
+                                                  offset: const Offset(0, 1),
                                                 ),
                                               ],
                                             ),
                                             child: Icon(
                                               _proxyEnabled ? Icons.check : Icons.close,
                                               color: _proxyEnabled ? Colors.green : Colors.red,
-                                              size: 24,
+                                              size: 18,
                                             ),
                                           ),
                                         ),
@@ -347,9 +375,143 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
 
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 16),
 
-                      // 🎯 关键修复：代理地址输入框 - 根据启用状态决定是否使用 focusNode
+                      // 🎯 新增：代理类型选择
+                      InkWell(
+                        focusNode: _typeSelectFocus,
+                        onTap: _proxyEnabled ? () {
+                          setState(() {
+                            _proxyType = _proxyType == ProxyType.http
+                                ? ProxyType.socks5
+                                : ProxyType.http;
+                          });
+                        } : null,
+                        onFocusChange: (hasFocus) {
+                          setState(() {});
+                        },
+                        child: Builder(
+                          builder: (context) {
+                            final isFocused = _typeSelectFocus.hasFocus;
+                            return Opacity(
+                              opacity: _proxyEnabled ? 1.0 : 0.5,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade900,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: isFocused && _proxyEnabled
+                                        ? Colors.blue
+                                        : Colors.transparent,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(6),
+                                          decoration: BoxDecoration(
+                                            color: _proxyType == ProxyType.http
+                                                ? Colors.blue.withValues(alpha: 0.2)
+                                                : Colors.purple.withValues(alpha: 0.2),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(
+                                            _proxyType == ProxyType.http
+                                                ? Icons.http
+                                                : Icons.vpn_lock,
+                                            color: _proxyType == ProxyType.http
+                                                ? Colors.blue
+                                                : Colors.purple,
+                                            size: 24,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              '代理类型',
+                                              style: TextStyle(
+                                                color: _proxyEnabled
+                                                    ? Colors.white
+                                                    : Colors.grey,
+                                                fontSize: 18,
+                                                fontWeight: isFocused
+                                                    ? FontWeight.bold
+                                                    : FontWeight.normal,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              _proxyType.displayName,
+                                              style: TextStyle(
+                                                color: _proxyEnabled
+                                                    ? (_proxyType == ProxyType.http
+                                                    ? Colors.blue.shade300
+                                                    : Colors.purple.shade300)
+                                                    : Colors.grey,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                    // 类型切换指示器
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _proxyEnabled
+                                            ? (_proxyType == ProxyType.http
+                                            ? Colors.blue.withValues(alpha: 0.3)
+                                            : Colors.purple.withValues(alpha: 0.3))
+                                            : Colors.grey.withValues(alpha: 0.3),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            _proxyType.displayName,
+                                            style: TextStyle(
+                                              color: _proxyEnabled
+                                                  ? Colors.white
+                                                  : Colors.grey,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Icon(
+                                            Icons.sync,
+                                            size: 16,
+                                            color: _proxyEnabled
+                                                ? Colors.white70
+                                                : Colors.grey,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // 代理地址输入框（保持不变）
                       ListenableBuilder(
                         listenable: _hostFocus,
                         builder: (context, child) {
@@ -358,15 +520,15 @@ class _SettingsPageState extends State<SettingsPage> {
                             opacity: _proxyEnabled ? 1.0 : 0.5,
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.all(20),
+                              padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
                                 color: Colors.grey.shade900,
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
                                   color: isFocused && _proxyEnabled
                                       ? Colors.blue
                                       : Colors.transparent,
-                                  width: 3,
+                                  width: 2,
                                 ),
                               ),
                               child: Column(
@@ -378,24 +540,23 @@ class _SettingsPageState extends State<SettingsPage> {
                                       color: _proxyEnabled
                                           ? Colors.white70
                                           : Colors.grey,
-                                      fontSize: 16,
+                                      fontSize: 14,
                                     ),
                                   ),
-                                  const SizedBox(height: 8),
+                                  const SizedBox(height: 6),
                                   TextField(
                                     controller: _hostController,
-                                    // 🎯 关键：只在启用状态下使用 focusNode
                                     focusNode: _proxyEnabled ? _hostFocus : null,
                                     enabled: _proxyEnabled,
                                     style: const TextStyle(
                                       color: Colors.white,
-                                      fontSize: 20,
+                                      fontSize: 16,
                                     ),
                                     decoration: const InputDecoration(
                                       hintText: '例如: 127.0.0.1 或 192.168.1.100',
                                       hintStyle: TextStyle(
                                         color: Colors.grey,
-                                        fontSize: 16,
+                                        fontSize: 13,
                                       ),
                                       border: InputBorder.none,
                                       contentPadding: EdgeInsets.zero,
@@ -413,9 +574,9 @@ class _SettingsPageState extends State<SettingsPage> {
                         },
                       ),
 
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 14),
 
-                      // 🎯 关键修复：代理端口输入框 - 根据启用状态决定是否使用 focusNode
+                      // 代理端口输入框（保持不变）
                       ListenableBuilder(
                         listenable: _portFocus,
                         builder: (context, child) {
@@ -424,15 +585,15 @@ class _SettingsPageState extends State<SettingsPage> {
                             opacity: _proxyEnabled ? 1.0 : 0.5,
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.all(20),
+                              padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
                                 color: Colors.grey.shade900,
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
                                   color: isFocused && _proxyEnabled
                                       ? Colors.blue
                                       : Colors.transparent,
-                                  width: 3,
+                                  width: 2,
                                 ),
                               ),
                               child: Column(
@@ -444,13 +605,12 @@ class _SettingsPageState extends State<SettingsPage> {
                                       color: _proxyEnabled
                                           ? Colors.white70
                                           : Colors.grey,
-                                      fontSize: 16,
+                                      fontSize: 14,
                                     ),
                                   ),
-                                  const SizedBox(height: 8),
+                                  const SizedBox(height: 6),
                                   TextField(
                                     controller: _portController,
-                                    // 🎯 关键：只在启用状态下使用 focusNode
                                     focusNode: _proxyEnabled ? _portFocus : null,
                                     enabled: _proxyEnabled,
                                     keyboardType: TextInputType.number,
@@ -459,13 +619,13 @@ class _SettingsPageState extends State<SettingsPage> {
                                     ],
                                     style: const TextStyle(
                                       color: Colors.white,
-                                      fontSize: 20,
+                                      fontSize: 16,
                                     ),
                                     decoration: const InputDecoration(
                                       hintText: '例如: 1080 或 8080',
                                       hintStyle: TextStyle(
                                         color: Colors.grey,
-                                        fontSize: 16,
+                                        fontSize: 13,
                                       ),
                                       border: InputBorder.none,
                                       contentPadding: EdgeInsets.zero,
@@ -483,12 +643,11 @@ class _SettingsPageState extends State<SettingsPage> {
                         },
                       ),
 
-                      const SizedBox(height: 32),
+                      const SizedBox(height: 20),
 
-                      // 按钮行
+                      // 按钮行（保持不变）
                       Row(
                         children: [
-                          // 保存按钮
                           Expanded(
                             child: InkWell(
                               focusNode: _saveFocus,
@@ -501,24 +660,24 @@ class _SettingsPageState extends State<SettingsPage> {
                                   final isFocused = _saveFocus.hasFocus;
                                   return AnimatedContainer(
                                     duration: const Duration(milliseconds: 200),
-                                    padding: const EdgeInsets.symmetric(vertical: 18),
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
                                     decoration: BoxDecoration(
                                       color: isFocused
                                           ? Colors.blue
                                           : Colors.blue.shade700,
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(10),
                                       border: Border.all(
                                         color: isFocused
                                             ? Colors.white
                                             : Colors.transparent,
-                                        width: 3,
+                                        width: 2,
                                       ),
                                       boxShadow: isFocused
                                           ? [
                                         BoxShadow(
                                           color: Colors.blue.withValues(alpha: 0.5),
-                                          blurRadius: 10,
-                                          spreadRadius: 2,
+                                          blurRadius: 8,
+                                          spreadRadius: 1,
                                         )
                                       ]
                                           : [],
@@ -529,14 +688,14 @@ class _SettingsPageState extends State<SettingsPage> {
                                         const Icon(
                                           Icons.check,
                                           color: Colors.white,
-                                          size: 24,
+                                          size: 20,
                                         ),
-                                        const SizedBox(width: 12),
+                                        const SizedBox(width: 8),
                                         Text(
                                           '保存设置',
                                           style: TextStyle(
                                             color: Colors.white,
-                                            fontSize: 20,
+                                            fontSize: 16,
                                             fontWeight: isFocused
                                                 ? FontWeight.bold
                                                 : FontWeight.normal,
@@ -549,10 +708,7 @@ class _SettingsPageState extends State<SettingsPage> {
                               ),
                             ),
                           ),
-
-                          const SizedBox(width: 16),
-
-                          // 取消按钮
+                          const SizedBox(width: 12),
                           Expanded(
                             child: InkWell(
                               focusNode: _cancelFocus,
@@ -565,17 +721,17 @@ class _SettingsPageState extends State<SettingsPage> {
                                   final isFocused = _cancelFocus.hasFocus;
                                   return AnimatedContainer(
                                     duration: const Duration(milliseconds: 200),
-                                    padding: const EdgeInsets.symmetric(vertical: 18),
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
                                     decoration: BoxDecoration(
                                       color: isFocused
                                           ? Colors.grey.shade700
                                           : Colors.grey.shade800,
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(10),
                                       border: Border.all(
                                         color: isFocused
                                             ? Colors.white
                                             : Colors.transparent,
-                                        width: 3,
+                                        width: 2,
                                       ),
                                     ),
                                     child: Row(
@@ -584,14 +740,14 @@ class _SettingsPageState extends State<SettingsPage> {
                                         const Icon(
                                           Icons.close,
                                           color: Colors.white,
-                                          size: 24,
+                                          size: 20,
                                         ),
-                                        const SizedBox(width: 12),
+                                        const SizedBox(width: 8),
                                         Text(
                                           '取消',
                                           style: TextStyle(
                                             color: Colors.white,
-                                            fontSize: 20,
+                                            fontSize: 16,
                                             fontWeight: isFocused
                                                 ? FontWeight.bold
                                                 : FontWeight.normal,
@@ -607,17 +763,72 @@ class _SettingsPageState extends State<SettingsPage> {
                         ],
                       ),
 
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 14),
 
-                      // 提示信息
+                      // 清除缓存按钮（保持不变）
+                      InkWell(
+                        focusNode: _clearCacheFocus,
+                        onTap: _clearCache,
+                        onFocusChange: (hasFocus) {
+                          setState(() {});
+                        },
+                        child: Builder(
+                          builder: (context) {
+                            final isFocused = _clearCacheFocus.hasFocus;
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              decoration: BoxDecoration(
+                                color: isFocused
+                                    ? Colors.orange.shade700
+                                    : Colors.orange.shade800,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: isFocused
+                                      ? Colors.white
+                                      : Colors.transparent,
+                                  width: 2,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(
+                                    Icons.delete_sweep,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _cacheTimeInfo != null
+                                        ? '清除缓存 (更新于 $_cacheTimeInfo)'
+                                        : '清除缓存',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: isFocused
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // 🎯 提示信息（更新内容）
                       Container(
-                        padding: const EdgeInsets.all(20),
+                        padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
                           color: Colors.orange.shade900.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(10),
                           border: Border.all(
                             color: Colors.orange.shade700,
-                            width: 2,
+                            width: 1.5,
                           ),
                         ),
                         child: Column(
@@ -628,31 +839,31 @@ class _SettingsPageState extends State<SettingsPage> {
                                 Icon(
                                   Icons.info_outline,
                                   color: Colors.orange.shade300,
-                                  size: 24,
+                                  size: 20,
                                 ),
-                                const SizedBox(width: 12),
+                                const SizedBox(width: 8),
                                 const Text(
                                   '温馨提示',
                                   style: TextStyle(
                                     color: Colors.orange,
-                                    fontSize: 18,
+                                    fontSize: 15,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 8),
                             const Text(
-                              '• 修改代理设置后需要重新加载频道列表\n'
-                                  '• 如遇到加载失败，请检查代理设置是否正确\n'
-                                  '• 常见代理端口: HTTP 1080, SOCKS5 1080\n'
-                                  '• 使用遥控器上下键在各项间切换\n'
-                                  '• 使用遥控器确认键切换开关或保存设置\n'
-                                  '• 在输入框中按确认键可跳到下一项',
+                              '• 支持 HTTP 和 SOCKS5 两种代理类型\n'
+                                  '• HTTP: 适用于大多数场景，端口通常为 1080/8080\n'
+                                  '• SOCKS5: 更安全的代理协议，端口通常为 1080\n'
+                                  '• 修改设置后需要重新加载频道列表\n'
+                                  '• 频道源会自动缓存，网络失败时使用缓存\n'
+                                  '• 使用遥控器上下键在各项间切换',
                               style: TextStyle(
                                 color: Colors.white70,
-                                fontSize: 16,
-                                height: 1.5,
+                                fontSize: 13,
+                                height: 1.4,
                               ),
                             ),
                           ],

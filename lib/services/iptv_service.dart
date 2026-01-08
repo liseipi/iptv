@@ -37,9 +37,12 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
 
     if (proxyUrl != null) {
       final httpClient = HttpClient();
+
+      // 🎯 修改：使用 getProxyString 方法
       httpClient.findProxy = (uri) {
-        return 'PROXY ${proxyManager.proxyHost}:${proxyManager.proxyPort}';
+        return proxyManager.getProxyString();
       };
+
       httpClient.badCertificateCallback =
           (X509Certificate cert, String host, int port) => true;
 
