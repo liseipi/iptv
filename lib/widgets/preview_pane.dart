@@ -1,8 +1,13 @@
-// lib/widgets/preview_pane.dart (优化版 - 改进重试逻辑和控制器释放顺序)
+// lib/widgets/preview_pane.dart (Chewie 可选版本 - 预览面板保持轻量)
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../models/channel.dart';
+
+/// 🎯 说明：预览面板继续使用 VideoPlayer 保持轻量
+/// 只在播放页面使用 Chewie 以获得更好的音画同步
+///
+/// 如果想在预览面板也使用 Chewie，参考播放页面的实现
 
 class PreviewPane extends StatefulWidget {
   final Channel? channel;
@@ -23,7 +28,6 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
   String? _errorMessage;
   int _controllerVersion = 0;
 
-  // 重试相关变量
   int _retryCount = 0;
   static const int _maxRetries = 3;
   static const Duration _retryDelay = Duration(seconds: 2);
@@ -59,14 +63,11 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
   void _switchChannel(Channel newChannel) {
     debugPrint("🔄 预览面板：开始切换频道 ${newChannel.name}");
 
-    // 取消所有计时器
     _debounce?.cancel();
     _initTimeout?.cancel();
     _retryTimer?.cancel();
 
-    // 重置重试计数
     _retryCount = 0;
-
     _controllerVersion++;
     final currentVersion = _controllerVersion;
 
@@ -80,22 +81,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     });
 
     if (oldController != null) {
-      try {
-        if (oldController.value.isInitialized) {
-          oldController.pause();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 预览面板：暂停旧控制器失败: $e');
-      }
-
-      Future.delayed(const Duration(milliseconds: 50), () async {
-        try {
-          await oldController.dispose();
-          debugPrint("✅ 预览面板：已释放旧控制器");
-        } catch (e) {
-          debugPrint('⚠️ 预览面板：释放旧控制器失败: $e');
-        }
-      });
+      _disposeControllerSafely(oldController);
     }
 
     _debounce = Timer(const Duration(milliseconds: 300), () {
@@ -106,6 +92,26 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       if (mounted && !_isPaused) {
         _initializePlayerForChannel(newChannel, currentVersion);
+      }
+    });
+  }
+
+  void _disposeControllerSafely(VideoPlayerController controller) async {
+    try {
+      if (controller.value.isInitialized) {
+        await controller.pause();
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+    } catch (e) {
+      debugPrint('⚠️ 预览面板：暂停控制器失败: $e');
+    }
+
+    Future.delayed(const Duration(milliseconds: 100), () async {
+      try {
+        await controller.dispose();
+        debugPrint("✅ 预览面板：已释放旧控制器");
+      } catch (e) {
+        debugPrint('⚠️ 预览面板：释放旧控制器失败: $e');
       }
     });
   }
@@ -124,7 +130,6 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       return;
     }
 
-    // 显示当前尝试次数
     if (_retryCount > 0) {
       debugPrint("🔄 预览面板：第 $_retryCount 次重试 ${channel.name}");
     } else {
@@ -143,7 +148,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       newController = VideoPlayerController.networkUrl(
         Uri.parse(channel.url),
         videoPlayerOptions: VideoPlayerOptions(
-          mixWithOthers: true,
+          mixWithOthers: true, // 预览模式允许混音
           allowBackgroundPlayback: false,
         ),
       );
@@ -164,8 +169,6 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
           _isInitializing) {
 
         debugPrint("⏱️ 预览面板：初始化超时 ${channel.name}");
-
-        // 超时也算失败，触发重试
         _handleInitializationFailure(channel, currentVersion);
       }
     });
@@ -173,31 +176,17 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     newController.initialize().then((_) {
       if (!mounted || currentVersion != _controllerVersion) {
         debugPrint("⚠️ 预览面板：页面已卸载或版本不匹配，清理控制器");
-        Future.delayed(const Duration(milliseconds: 50), () async {
-          try {
-            await newController.dispose();
-          } catch (e) {
-            debugPrint('⚠️ 预览面板：清理过期控制器失败: $e');
-          }
-        });
+        _disposeControllerSafely(newController);
         return;
       }
 
       if (newController != _controller) {
         debugPrint("⚠️ 预览面板：控制器已被替换，清理旧控制器");
-        Future.delayed(const Duration(milliseconds: 50), () async {
-          try {
-            await newController.dispose();
-          } catch (e) {
-            debugPrint('⚠️ 预览面板：清理被替换控制器失败: $e');
-          }
-        });
+        _disposeControllerSafely(newController);
         return;
       }
 
       _initTimeout?.cancel();
-
-      // 成功初始化，重置重试计数
       _retryCount = 0;
 
       setState(() {
@@ -207,8 +196,8 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       if (!_isPaused) {
         try {
+          newController.setVolume(0.5); // 预览模式低音量
           newController.play();
-          newController.setVolume(0.5);
           debugPrint("✅ 预览面板：初始化成功并开始播放 ${channel.name}");
         } catch (e) {
           debugPrint("⚠️ 预览面板：播放失败: $e");
@@ -219,37 +208,21 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       debugPrint("❌ 预览面板：初始化失败 ${channel.name}: $error");
 
       if (!mounted || currentVersion != _controllerVersion) {
-        Future.delayed(const Duration(milliseconds: 50), () async {
-          try {
-            await newController.dispose();
-          } catch (e) {
-            debugPrint('⚠️ 预览面板：清理失败控制器错误: $e');
-          }
-        });
+        _disposeControllerSafely(newController);
         return;
       }
 
       if (newController != _controller) {
-        Future.delayed(const Duration(milliseconds: 50), () async {
-          try {
-            await newController.dispose();
-          } catch (e) {
-            debugPrint('⚠️ 预览面板：清理失败控制器错误: $e');
-          }
-        });
+        _disposeControllerSafely(newController);
         return;
       }
 
       _initTimeout?.cancel();
-
-      // 初始化失败，触发重试
       _handleInitializationFailure(channel, currentVersion);
     });
   }
 
-  // 🎯 优化：处理初始化失败的方法 - 改进释放和重试顺序
   void _handleInitializationFailure(Channel channel, int version) {
-    // 检查是否还能重试
     if (_retryCount < _maxRetries) {
       _retryCount++;
 
@@ -260,39 +233,25 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         _errorMessage = "连接失败，正在重试 ($_retryCount/$_maxRetries)...";
       });
 
-      // 🎯 关键修复：先保存旧控制器引用，清空当前控制器
       final oldController = _controller;
       _controller = null;
 
-      // 延迟后重试
       _retryTimer?.cancel();
       _retryTimer = Timer(_retryDelay, () async {
         if (!mounted || version != _controllerVersion) {
           debugPrint("⚠️ 预览面板：重试取消（页面已卸载或频道已切换）");
 
-          // 清理控制器
           if (oldController != null) {
-            try {
-              await oldController.dispose();
-              debugPrint("✅ 预览面板：已清理取消重试的控制器");
-            } catch (e) {
-              debugPrint('⚠️ 预览面板：清理控制器失败: $e');
-            }
+            _disposeControllerSafely(oldController);
           }
           return;
         }
 
-        // 🎯 在重试前先彻底释放旧控制器
         if (oldController != null) {
-          try {
-            await oldController.dispose();
-            debugPrint("✅ 预览面板：已释放失败的控制器，准备重试");
-          } catch (e) {
-            debugPrint('⚠️ 预览面板：释放失败控制器错误: $e');
-          }
+          await oldController.dispose();
+          debugPrint("✅ 预览面板：已释放失败的控制器，准备重试");
         }
 
-        // 🎯 等待一小段时间确保资源完全释放
         await Future.delayed(const Duration(milliseconds: 100));
 
         if (!mounted || version != _controllerVersion) {
@@ -304,22 +263,13 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         _initializePlayerForChannel(channel, version);
       });
     } else {
-      // 达到最大重试次数
       debugPrint("❌ 预览面板：已达到最大重试次数 ($_maxRetries)");
 
-      // 🎯 清理失败的控制器
       final oldController = _controller;
       _controller = null;
 
       if (oldController != null) {
-        Future.delayed(const Duration(milliseconds: 50), () async {
-          try {
-            await oldController.dispose();
-            debugPrint("✅ 预览面板：已释放最终失败的控制器");
-          } catch (e) {
-            debugPrint('⚠️ 预览面板：释放最终失败控制器错误: $e');
-          }
-        });
+        _disposeControllerSafely(oldController);
       }
 
       setState(() {
@@ -327,27 +277,34 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
         _isInitializing = false;
       });
 
-      // 重置重试计数，以便下次切换频道时重新开始
       _retryCount = 0;
     }
   }
 
+  /// 🎯 准备控制器用于播放页面（将被 Chewie 包装）
   VideoPlayerController? prepareControllerForPlayback() {
     if (_controller != null && _controller!.value.isInitialized) {
-      debugPrint("✅ 预览面板：准备传递控制器到播放页面");
+      debugPrint("✅ 预览面板：准备传递控制器到播放页面（将使用 Chewie）");
 
-      _controller!.pause();
-      final controllerToPass = _controller;
-      _controller = null;
-      _isPaused = true;
+      try {
+        _controller!.pause();
 
-      return controllerToPass;
+        final controllerToPass = _controller;
+        _controller = null;
+        _isPaused = true;
+
+        return controllerToPass;
+      } catch (e) {
+        debugPrint("⚠️ 预览面板：准备控制器失败: $e");
+        return null;
+      }
     }
 
     debugPrint("⚠️ 预览面板：控制器不可用");
     return null;
   }
 
+  /// 🎯 接收从播放页面返回的控制器
   void receiveControllerFromPlayback(VideoPlayerController? returnedController) {
     debugPrint("🔙 预览面板：尝试接收返回的控制器");
 
@@ -363,13 +320,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
 
       final oldController = _controller;
       if (oldController != null && oldController != returnedController) {
-        Future.delayed(const Duration(milliseconds: 50), () async {
-          try {
-            await oldController.dispose();
-          } catch (e) {
-            debugPrint('⚠️ 预览面板：释放旧控制器失败: $e');
-          }
-        });
+        _disposeControllerSafely(oldController);
       }
 
       _controller = returnedController;
@@ -381,7 +332,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
       setState(() {});
 
       try {
-        _controller!.setVolume(0.5);
+        _controller!.setVolume(0.5); // 恢复预览音量
         if (!_controller!.value.isPlaying) {
           _controller!.play();
         }
@@ -407,7 +358,6 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     debugPrint("⏸️ 预览面板：暂停预览");
     _isPaused = true;
 
-    // 暂停时取消重试
     _retryTimer?.cancel();
     _retryCount = 0;
 
@@ -415,21 +365,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     _controller = null;
 
     if (oldController != null) {
-      try {
-        if (oldController.value.isInitialized) {
-          oldController.pause();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 预览面板：暂停控制器失败: $e');
-      }
-
-      Future.delayed(const Duration(milliseconds: 100), () async {
-        try {
-          await oldController.dispose();
-        } catch (e) {
-          debugPrint('⚠️ 预览面板：释放暂停控制器失败: $e');
-        }
-      });
+      _disposeControllerSafely(oldController);
     }
 
     setState(() {});
@@ -466,15 +402,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     _controller = null;
 
     if (controller != null) {
-      try {
-        if (controller.value.isInitialized) {
-          controller.pause();
-        }
-        controller.dispose();
-        debugPrint("✅ 预览面板：已释放控制器");
-      } catch (e) {
-        debugPrint('⚠️ 预览面板：dispose 时释放控制器失败: $e');
-      }
+      _disposeControllerSafely(controller);
     }
 
     _controllerVersion++;
@@ -558,7 +486,7 @@ class PreviewPaneState extends State<PreviewPane> with WidgetsBindingObserver {
     }
     if (_errorMessage != null) return "$_errorMessage (可切换其他频道)";
     if (_controller != null && _controller!.value.isInitialized) {
-      return "预览播放中 (点击确认可无缝切换)";
+      return "预览播放中 (确认后使用 Chewie 播放器)";
     }
     return "等待加载";
   }
