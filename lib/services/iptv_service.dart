@@ -15,11 +15,13 @@ class IptvService {
   static const String localTestM3uContent = '''
 #EXTM3U x-tvg-url="http://epg.51zmt.top:8000/e.xml"
 #EXTINF:-1 tvg-name="CCTV1" tvg-id="256" tvg-logo="https://livecdn.zbds.org/logo/CCTV1.png" group-title="央视频道", CCTV1
-https://haoyunlai.serv00.net/Smartv-1.php?id=ctinews
+http://222.169.85.8:9901/tsfile/live/0001_1.m3u8
 #EXTINF:-1 tvg-name="CCTV1" tvg-id="256" tvg-logo="https://livecdn.zbds.org/logo/CCTV1.png" group-title="央视频道", CCTV1
-https://aktv.top/AKTV/live/aktv/null-8/AKTV.m3u8
+https://www.wmviv.com/iptv/bc2t.php?id=cctv1
 #EXTINF:-1 tvg-name="CCTV1" tvg-id="256" tvg-logo="https://livecdn.zbds.org/logo/CCTV1.png" group-title="央视频道", CCTV1
-https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
+http://222.214.208.34:59901/tsfile/live/0001_1.m3u8
+#EXTINF:-1 tvg-name="CCTV1" tvg-id="256" tvg-logo="https://livecdn.zbds.org/logo/CCTV1.png" group-title="央视频道", CCTV1
+https://iptv.catvod.com/live.php?id=CCTV1
 ''';
 
   static const Duration requestTimeout = Duration(seconds: 30);
@@ -275,7 +277,7 @@ https://iptv.vip-tptv.xyz/litv.php?id=4gtv-4gtv009
       if (line.startsWith('#EXTINF:')) {
         if (i + 1 < lines.length) {
           final nextLine = lines[i + 1].trim();
-          if (nextLine.startsWith('http') || nextLine.startsWith('rtmp')) {
+          if (nextLine.startsWith('http') || nextLine.startsWith('rtmp') || nextLine.startsWith('p3p') || nextLine.startsWith('rtsp')) {
             final url = nextLine;
 
             final name = _extractValue(line, 'tvg-name');

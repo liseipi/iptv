@@ -76,7 +76,7 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     try {
-      // 先暂停，避免创建控制器时的音画不同步
+      // 先暂停，将播放控制权交给 Chewie，避免音画不同步
       _videoPlayerController!.pause();
 
       _chewieController = ChewieController(
@@ -97,7 +97,8 @@ class _PlayerPageState extends State<PlayerPage> {
         allowPlaybackSpeedChanging: false,
 
         // 🎯 宽高比
-        aspectRatio: _videoPlayerController!.value.aspectRatio,
+        // aspectRatio: _videoPlayerController!.value.aspectRatio,
+        aspectRatio: 16 / 9,
 
         // 🎯 错误构建器
         errorBuilder: (context, errorMessage) {
@@ -150,13 +151,9 @@ class _PlayerPageState extends State<PlayerPage> {
       // 🎯 关键：确保音量正常
       _videoPlayerController!.setVolume(1.0);
 
-      // 延迟播放，确保 Chewie 完全初始化
-      Future.delayed(const Duration(milliseconds: 200), () {
-        if (mounted && _chewieController != null) {
-          _chewieController!.play();
-          debugPrint("✅ Chewie 控制器创建完成并开始播放");
-        }
-      });
+      // autoPlay: true 会自动处理播放，无需手动延迟和调用 play()
+      // 这可以解决音画不同步问题
+      debugPrint("✅ Chewie 控制器创建完成，将自动播放");
 
     } catch (e) {
       debugPrint("❌ 创建 Chewie 控制器失败: $e");
