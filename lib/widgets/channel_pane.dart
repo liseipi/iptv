@@ -1,7 +1,6 @@
-// lib/widgets/channel_pane.dart (修复版 - 支持遥控器确认键打开频道)
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // 🎯 添加这个导入
+import 'package:flutter/services.dart';
 import '../models/channel.dart';
 
 class ChannelPane extends StatelessWidget {
@@ -75,14 +74,14 @@ class ChannelListItem extends StatefulWidget {
 
 class _ChannelListItemState extends State<ChannelListItem> {
   bool _isFocused = false;
-  Timer? _throttleTimer;
-  bool _canTriggerFocus = true;
+  Timer? _debounceTimer;
 
-  static const int _throttleDuration = 300;
+  // 防抖时间，单位毫秒。用户快速切换时，会等待 500ms 后再更新预览
+  static const int _debounceDuration = 500;
 
   @override
   void dispose() {
-    _throttleTimer?.cancel();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
@@ -100,37 +99,21 @@ class _ChannelListItemState extends State<ChannelListItem> {
         curve: Curves.easeInOut,
       );
 
-      // 使用节流处理焦点回调
-      if (_canTriggerFocus) {
-        widget.onFocus();
-        _canTriggerFocus = false;
-
-        _throttleTimer?.cancel();
-        _throttleTimer = Timer(
-          const Duration(milliseconds: _throttleDuration),
-              () {
-            if (mounted) {
-              _canTriggerFocus = true;
-              if (_isFocused) {
-                widget.onFocus();
-              }
-            }
-          },
-        );
-      } else {
-        _throttleTimer?.cancel();
-        _throttleTimer = Timer(
-          const Duration(milliseconds: _throttleDuration),
-              () {
-            if (mounted) {
-              _canTriggerFocus = true;
-              if (_isFocused) {
-                widget.onFocus();
-              }
-            }
-          },
-        );
-      }
+      // 使用防抖处理焦点回调
+      // 取消上一个定时器，确保只有在用户停止操作时才触发
+      _debounceTimer?.cancel();
+      _debounceTimer = Timer(
+        const Duration(milliseconds: _debounceDuration),
+            () {
+          if (mounted && _isFocused) {
+            // 定时器触发时，如果当前项仍然有焦点，则执行回调
+            widget.onFocus();
+          }
+        },
+      );
+    } else {
+      // 失去焦点时，取消定时器，避免不必要的回调
+      _debounceTimer?.cancel();
     }
   }
 
@@ -139,10 +122,8 @@ class _ChannelListItemState extends State<ChannelListItem> {
     return Focus(
       autofocus: widget.autofocus,
       onFocusChange: _handleFocusChange,
-      // 🎯 关键修复：添加键盘事件处理
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent) {
-          // 处理确认键（遥控器的确认键或回车键）
           if (event.logicalKey == LogicalKeyboardKey.select ||
               event.logicalKey == LogicalKeyboardKey.enter) {
             debugPrint('✅ 频道项：确认键触发，打开频道 ${widget.channel.name}');
