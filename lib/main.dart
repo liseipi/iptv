@@ -1,4 +1,4 @@
-// lib/main.dart (优化版 - 优先使用缓存 + 友好的提示方式)
+// lib/main.dart (支持全屏切换频道并同步预览)
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -47,8 +47,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Channel? _focusedChannel;
   bool _isLoading = true;
   String? _errorMessage;
-
-  // 🎯 新增：是否是首次加载（无缓存）
   bool _isFirstLoad = true;
 
   // --- 焦点管理 ---
@@ -60,6 +58,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final ScrollController _channelScrollController = ScrollController();
 
   final GlobalKey<PreviewPaneState> _previewPaneKey = GlobalKey<PreviewPaneState>();
+
+  // 🎯 新增：频道面板的 GlobalKey，用于外部控制焦点
+  final GlobalKey<ChannelPaneState> _channelPaneKey = GlobalKey<ChannelPaneState>();
 
   // 防抖计时器
   Timer? _previewDebounce;
@@ -81,7 +82,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _loadChannels({bool forceUpdate = false}) async {
-    // 🎯 改进：只在首次加载或强制更新时显示加载状态
     if (_isFirstLoad || forceUpdate || _categories.isEmpty) {
       setState(() {
         _isLoading = true;
@@ -105,11 +105,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _isFirstLoad = false;
       });
 
-      // 🎯 改进：只在强制更新或首次成功加载时显示提示
       if (forceUpdate && mounted) {
         _showToast('频道列表已更新', isError: false, duration: 2);
       } else if (!_isFirstLoad && mounted) {
-        // 后台更新成功，显示简短提示
         final cacheTime = await IptvService.getCacheTimeInfo();
         if (cacheTime != null) {
           _showToast('频道列表更新于 $cacheTime', isError: false, duration: 2);
@@ -124,17 +122,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _isFirstLoad = false;
       });
 
-      // 🎯 改进：只在首次加载失败或强制更新失败时显示错误
       if (forceUpdate || _categories.isEmpty) {
         _showToast('加载失败: $e', isError: true, duration: 3);
       }
     }
   }
 
-  /// 🎯 新增：显示短暂的Toast提示，不会一直显示
   void _showToast(String message, {required bool isError, int duration = 2}) {
     if (mounted) {
-      ScaffoldMessenger.of(context).clearSnackBars(); // 清除之前的提示
+      ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
@@ -196,31 +192,60 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       debugPrint("⚠️ 主页面:预览控制器不可用,将重新加载");
     }
 
+    // 🎯 获取当前分类的所有频道和当前频道索引
+    final currentChannels = _groupedChannels[_selectedCategory] ?? [];
+    final currentIndex = currentChannels.indexOf(channel);
+
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => PlayerPage(
           channel: channel,
           previewController: previewController,
+          // 🎯 传递完整的频道列表和当前索引
+          allChannels: currentChannels,
+          initialIndex: currentIndex >= 0 ? currentIndex : 0,
         ),
       ),
     );
 
     if (mounted) {
       debugPrint("主页面:从播放页面返回");
-      final returnedController = result as VideoPlayerController?;
 
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted) {
-          _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
+      // 🎯 result 现在是一个 Map，包含 controller 和 returnedChannel
+      if (result is Map<String, dynamic>) {
+        final returnedController = result['controller'] as VideoPlayerController?;
+        final returnedChannel = result['channel'] as Channel?;
 
-          if (returnedController != null) {
-            debugPrint("✅ 主页面:成功接收并传递控制器,实现双向无缝切换");
-          } else {
-            debugPrint("⚠️ 主页面:未接收到控制器,预览将重新加载");
-          }
+        // 🎯 如果返回了不同的频道，更新焦点
+        if (returnedChannel != null && returnedChannel != _focusedChannel) {
+          debugPrint("🔄 主页面: 更新焦点到频道 ${returnedChannel.name}");
+
+          setState(() {
+            _focusedChannel = returnedChannel;
+          });
+
+          // 🎯 更新频道面板的焦点
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (mounted) {
+              _channelPaneKey.currentState?.focusOnChannel(returnedChannel);
+            }
+          });
         }
-      });
+
+        // 传递控制器到预览面板
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) {
+            _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
+
+            if (returnedController != null) {
+              debugPrint("✅ 主页面:成功接收并传递控制器,实现双向无缝切换");
+            } else {
+              debugPrint("⚠️ 主页面:未接收到控制器,预览将重新加载");
+            }
+          }
+        });
+      }
     }
   }
 
@@ -232,7 +257,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       MaterialPageRoute(builder: (context) => const SettingsPage()),
     );
 
-    // 🎯 改进：设置返回后强制更新
     if (result == true) {
       await _loadChannels(forceUpdate: true);
     }
@@ -260,7 +284,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // 🎯 改进：只在首次加载且无缓存时显示加载界面
     if (_isLoading && _categories.isEmpty) {
       return const Scaffold(
         body: Center(
@@ -276,7 +299,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
     }
 
-    // 🎯 改进：只在首次加载失败且无缓存时显示错误界面
     if (_categories.isEmpty && !_isLoading) {
       return Scaffold(
         body: Center(
@@ -360,7 +382,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           child: Scaffold(
             body: Stack(
               children: [
-                // 背景图
                 Positioned.fill(
                   child: Image.asset(
                     'assets/background.jpg',
@@ -371,7 +392,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
                 Column(
                   children: [
-                    // 顶部设置栏
                     Container(
                       height: 60,
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -462,11 +482,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       ),
                     ),
 
-                    // 内容区
                     Expanded(
                       child: Row(
                         children: [
-                          // 分类面板
                           Expanded(
                             flex: 2,
                             child: CategoryPane(
@@ -478,11 +496,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             ),
                           ),
 
-                          // 频道面板
                           Expanded(
                             flex: 3,
                             child: ChannelPane(
-                              key: ValueKey(_selectedCategory),
+                              key: _channelPaneKey, // 🎯 添加 key
                               scrollController: _channelScrollController,
                               focusScopeNode: _channelPaneFocusScope,
                               channels: _groupedChannels[_selectedCategory] ?? [],
@@ -491,7 +508,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             ),
                           ),
 
-                          // 预览面板
                           Expanded(
                             flex: 5,
                             child: PreviewPane(
@@ -513,7 +529,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 }
 
-// Intent 定义
 class _MoveToChannelsIntent extends Intent { const _MoveToChannelsIntent(); }
 class _MoveToCategoriesIntent extends Intent { const _MoveToCategoriesIntent(); }
 class _MoveUpIntent extends Intent { const _MoveUpIntent(); }

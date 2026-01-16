@@ -1,9 +1,10 @@
+// lib/widgets/channel_pane.dart (支持外部控制焦点)
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/channel.dart';
 
-class ChannelPane extends StatelessWidget {
+class ChannelPane extends StatefulWidget {
   final FocusScopeNode focusScopeNode;
   final ScrollController scrollController;
   final List<Channel> channels;
@@ -20,13 +21,51 @@ class ChannelPane extends StatelessWidget {
   });
 
   @override
+  State<ChannelPane> createState() => ChannelPaneState();
+}
+
+class ChannelPaneState extends State<ChannelPane> {
+  // 🎯 新增：用于追踪每个频道项的 FocusNode
+  final Map<Channel, FocusNode> _focusNodes = {};
+
+  @override
+  void dispose() {
+    // 清理所有 FocusNode
+    for (var node in _focusNodes.values) {
+      node.dispose();
+    }
+    _focusNodes.clear();
+    super.dispose();
+  }
+
+  // 🎯 新增：外部调用此方法来聚焦到指定频道
+  void focusOnChannel(Channel channel) {
+    final focusNode = _focusNodes[channel];
+    if (focusNode != null) {
+      debugPrint("🎯 频道面板：聚焦到 ${channel.name}");
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) {
+          focusNode.requestFocus();
+        }
+      });
+    } else {
+      debugPrint("⚠️ 频道面板：未找到 ${channel.name} 的 FocusNode");
+    }
+  }
+
+  // 🎯 获取或创建频道的 FocusNode
+  FocusNode _getFocusNode(Channel channel) {
+    return _focusNodes.putIfAbsent(channel, () => FocusNode());
+  }
+
+  @override
   Widget build(BuildContext context) {
     return FocusScope(
-      node: focusScopeNode,
+      node: widget.focusScopeNode,
       autofocus: false,
       child: Container(
         color: Colors.black.withOpacity(0.3),
-        child: channels.isEmpty
+        child: widget.channels.isEmpty
             ? const Center(
           child: Text(
             '该分类暂无频道',
@@ -34,16 +73,17 @@ class ChannelPane extends StatelessWidget {
           ),
         )
             : ListView.builder(
-          controller: scrollController,
-          itemCount: channels.length,
+          controller: widget.scrollController,
+          itemCount: widget.channels.length,
           itemBuilder: (context, index) {
-            final channel = channels[index];
+            final channel = widget.channels[index];
             return ChannelListItem(
               channel: channel,
               channelNumber: index + 1,
+              focusNode: _getFocusNode(channel), // 🎯 传递 FocusNode
               autofocus: index == 0,
-              onFocus: () => onChannelFocused(channel),
-              onTap: () => onChannelSubmitted(channel),
+              onFocus: () => widget.onChannelFocused(channel),
+              onTap: () => widget.onChannelSubmitted(channel),
             );
           },
         ),
@@ -55,6 +95,7 @@ class ChannelPane extends StatelessWidget {
 class ChannelListItem extends StatefulWidget {
   final Channel channel;
   final int channelNumber;
+  final FocusNode focusNode; // 🎯 新增：从外部传入的 FocusNode
   final bool autofocus;
   final VoidCallback onFocus;
   final VoidCallback onTap;
@@ -63,6 +104,7 @@ class ChannelListItem extends StatefulWidget {
     super.key,
     required this.channel,
     required this.channelNumber,
+    required this.focusNode, // 🎯 必传参数
     this.autofocus = false,
     required this.onFocus,
     required this.onTap,
@@ -76,7 +118,6 @@ class _ChannelListItemState extends State<ChannelListItem> {
   bool _isFocused = false;
   Timer? _debounceTimer;
 
-  // 防抖时间，单位毫秒。用户快速切换时，会等待 500ms 后再更新预览
   static const int _debounceDuration = 500;
 
   @override
@@ -100,19 +141,16 @@ class _ChannelListItemState extends State<ChannelListItem> {
       );
 
       // 使用防抖处理焦点回调
-      // 取消上一个定时器，确保只有在用户停止操作时才触发
       _debounceTimer?.cancel();
       _debounceTimer = Timer(
         const Duration(milliseconds: _debounceDuration),
             () {
           if (mounted && _isFocused) {
-            // 定时器触发时，如果当前项仍然有焦点，则执行回调
             widget.onFocus();
           }
         },
       );
     } else {
-      // 失去焦点时，取消定时器，避免不必要的回调
       _debounceTimer?.cancel();
     }
   }
@@ -120,6 +158,7 @@ class _ChannelListItemState extends State<ChannelListItem> {
   @override
   Widget build(BuildContext context) {
     return Focus(
+      focusNode: widget.focusNode, // 🎯 使用传入的 FocusNode
       autofocus: widget.autofocus,
       onFocusChange: _handleFocusChange,
       onKeyEvent: (node, event) {
@@ -127,7 +166,7 @@ class _ChannelListItemState extends State<ChannelListItem> {
           if (event.logicalKey == LogicalKeyboardKey.select ||
               event.logicalKey == LogicalKeyboardKey.enter) {
             debugPrint('✅ 频道项：确认键触发，打开频道 ${widget.channel.name}');
-            widget.onTap(); // 触发播放
+            widget.onTap();
             return KeyEventResult.handled;
           }
         }
