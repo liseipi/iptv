@@ -1,4 +1,4 @@
-// lib/main.dart (优化版 - 优先使用缓存 + 友好的提示方式)
+// lib/main.dart (优化版 - 支持播放页面切换频道)
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -196,11 +196,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       debugPrint("⚠️ 主页面:预览控制器不可用,将重新加载");
     }
 
+    // 🎯 获取当前分类的频道列表和索引
+    final channels = _groupedChannels[_selectedCategory] ?? [];
+    final currentIndex = channels.indexWhere((ch) => ch.url == channel.url);
+
+    debugPrint("📺 主页面: 准备播放 ${channel.name}, 索引: $currentIndex, 总频道数: ${channels.length}");
+
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => PlayerPage(
           channel: channel,
+          channels: channels, // 🎯 传递频道列表
+          initialIndex: currentIndex >= 0 ? currentIndex : 0, // 🎯 传递初始索引
           previewController: previewController,
         ),
       ),
@@ -208,19 +216,59 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     if (mounted) {
       debugPrint("主页面:从播放页面返回");
-      final returnedController = result as VideoPlayerController?;
 
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted) {
-          _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
+      // 🎯 result 现在是一个 Map，包含 controller 和 lastPlayedChannel
+      if (result is Map<String, dynamic>) {
+        final returnedController = result['controller'] as VideoPlayerController?;
+        final lastPlayedChannel = result['lastChannel'] as Channel?;
 
-          if (returnedController != null) {
-            debugPrint("✅ 主页面:成功接收并传递控制器,实现双向无缝切换");
-          } else {
-            debugPrint("⚠️ 主页面:未接收到控制器,预览将重新加载");
-          }
+        // 🎯 更新焦点频道为最后播放的频道
+        if (lastPlayedChannel != null && lastPlayedChannel.url != _focusedChannel?.url) {
+          debugPrint("🔄 主页面: 更新焦点频道为 ${lastPlayedChannel.name}");
+          setState(() {
+            _focusedChannel = lastPlayedChannel;
+          });
+
+          // 🎯 滚动到对应频道位置
+          Future.delayed(const Duration(milliseconds: 150), () {
+            if (mounted) {
+              final currentChannels = _groupedChannels[_selectedCategory] ?? [];
+              final targetIndex = currentChannels.indexWhere((ch) => ch.url == lastPlayedChannel.url);
+
+              if (targetIndex >= 0 && _channelScrollController.hasClients) {
+                debugPrint("📍 主页面: 滚动到频道索引 $targetIndex");
+                // 计算滚动位置（每个频道项约 64 像素高度）
+                final scrollPosition = targetIndex * 64.0;
+                _channelScrollController.animateTo(
+                  scrollPosition,
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                );
+              }
+            }
+          });
         }
-      });
+
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) {
+            _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
+
+            if (returnedController != null) {
+              debugPrint("✅ 主页面:成功接收并传递控制器,实现双向无缝切换");
+            } else {
+              debugPrint("⚠️ 主页面:未接收到控制器,预览将重新加载");
+            }
+          }
+        });
+      } else {
+        // 兼容旧版本返回值
+        final returnedController = result as VideoPlayerController?;
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) {
+            _previewPaneKey.currentState?.receiveControllerFromPlayback(returnedController);
+          }
+        });
+      }
     }
   }
 
@@ -486,6 +534,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               scrollController: _channelScrollController,
                               focusScopeNode: _channelPaneFocusScope,
                               channels: _groupedChannels[_selectedCategory] ?? [],
+                              focusedChannel: _focusedChannel, // 🎯 传递焦点频道
                               onChannelFocused: _onChannelFocused,
                               onChannelSubmitted: _onChannelSubmitted,
                             ),

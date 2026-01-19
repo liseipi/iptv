@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/channel.dart';
 
-class ChannelPane extends StatelessWidget {
+class ChannelPane extends StatefulWidget {
   final FocusScopeNode focusScopeNode;
   final ScrollController scrollController;
   final List<Channel> channels;
   final ValueChanged<Channel> onChannelFocused;
   final ValueChanged<Channel> onChannelSubmitted;
+  final Channel? focusedChannel; // 🎯 新增：外部传入的焦点频道
 
   const ChannelPane({
     super.key,
@@ -17,16 +18,80 @@ class ChannelPane extends StatelessWidget {
     required this.channels,
     required this.onChannelFocused,
     required this.onChannelSubmitted,
+    this.focusedChannel, // 🎯 新增
   });
+
+  @override
+  State<ChannelPane> createState() => _ChannelPaneState();
+}
+
+class _ChannelPaneState extends State<ChannelPane> {
+  // 🎯 保存每个频道的 FocusNode
+  final Map<String, FocusNode> _focusNodes = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeFocusNodes();
+  }
+
+  @override
+  void didUpdateWidget(ChannelPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // 🎯 频道列表变化时重新初始化焦点节点
+    if (widget.channels.length != oldWidget.channels.length) {
+      _disposeFocusNodes();
+      _initializeFocusNodes();
+    }
+
+    // 🎯 外部焦点频道变化时，请求对应项的焦点
+    if (widget.focusedChannel != null &&
+        widget.focusedChannel != oldWidget.focusedChannel) {
+      Future.delayed(const Duration(milliseconds: 50), () {
+        if (mounted) {
+          _requestFocusForChannel(widget.focusedChannel!);
+        }
+      });
+    }
+  }
+
+  void _initializeFocusNodes() {
+    for (var channel in widget.channels) {
+      _focusNodes[channel.url] = FocusNode();
+    }
+  }
+
+  void _disposeFocusNodes() {
+    for (var node in _focusNodes.values) {
+      node.dispose();
+    }
+    _focusNodes.clear();
+  }
+
+  // 🎯 请求特定频道的焦点
+  void _requestFocusForChannel(Channel channel) {
+    final focusNode = _focusNodes[channel.url];
+    if (focusNode != null && !focusNode.hasFocus) {
+      debugPrint("🎯 ChannelPane: 请求焦点到频道 ${channel.name}");
+      focusNode.requestFocus();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposeFocusNodes();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return FocusScope(
-      node: focusScopeNode,
+      node: widget.focusScopeNode,
       autofocus: false,
       child: Container(
         color: Colors.black.withOpacity(0.3),
-        child: channels.isEmpty
+        child: widget.channels.isEmpty
             ? const Center(
           child: Text(
             '该分类暂无频道',
@@ -34,16 +99,17 @@ class ChannelPane extends StatelessWidget {
           ),
         )
             : ListView.builder(
-          controller: scrollController,
-          itemCount: channels.length,
+          controller: widget.scrollController,
+          itemCount: widget.channels.length,
           itemBuilder: (context, index) {
-            final channel = channels[index];
+            final channel = widget.channels[index];
             return ChannelListItem(
               channel: channel,
               channelNumber: index + 1,
+              focusNode: _focusNodes[channel.url]!, // 🎯 传递对应的 FocusNode
               autofocus: index == 0,
-              onFocus: () => onChannelFocused(channel),
-              onTap: () => onChannelSubmitted(channel),
+              onFocus: () => widget.onChannelFocused(channel),
+              onTap: () => widget.onChannelSubmitted(channel),
             );
           },
         ),
@@ -55,6 +121,7 @@ class ChannelPane extends StatelessWidget {
 class ChannelListItem extends StatefulWidget {
   final Channel channel;
   final int channelNumber;
+  final FocusNode focusNode; // 🎯 修改：从外部接收 FocusNode
   final bool autofocus;
   final VoidCallback onFocus;
   final VoidCallback onTap;
@@ -63,6 +130,7 @@ class ChannelListItem extends StatefulWidget {
     super.key,
     required this.channel,
     required this.channelNumber,
+    required this.focusNode, // 🎯 修改
     this.autofocus = false,
     required this.onFocus,
     required this.onTap,
@@ -120,6 +188,7 @@ class _ChannelListItemState extends State<ChannelListItem> {
   @override
   Widget build(BuildContext context) {
     return Focus(
+      focusNode: widget.focusNode, // 🎯 使用外部传入的 FocusNode
       autofocus: widget.autofocus,
       onFocusChange: _handleFocusChange,
       onKeyEvent: (node, event) {
