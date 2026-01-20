@@ -1,4 +1,4 @@
-// lib/screens/player_page.dart (支持频道切换 + 节流控制)
+// lib/screens/player_page.dart (优化版 - 修复画面静止问题)
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,8 +8,8 @@ import '../models/channel.dart';
 
 class PlayerPage extends StatefulWidget {
   final Channel channel;
-  final List<Channel> channels; // 🎯 新增：频道列表
-  final int initialIndex; // 🎯 新增：初始索引
+  final List<Channel> channels;
+  final int initialIndex;
   final VideoPlayerController? previewController;
 
   const PlayerPage({
@@ -32,24 +32,26 @@ class _PlayerPageState extends State<PlayerPage> {
   String? _errorMessage;
   bool _isUsingPreviewController = false;
 
-  // 重试相关变量
   int _retryCount = 0;
   static const int _maxRetries = 3;
   static const Duration _retryDelay = Duration(seconds: 2);
   Timer? _retryTimer;
 
-  // 🎯 新增：频道切换相关
   late int _currentIndex;
   late Channel _currentChannel;
 
-  // 🎯 新增：节流控制
   Timer? _switchChannelThrottle;
   static const Duration _switchChannelDelay = Duration(milliseconds: 800);
   bool _isSwitching = false;
 
-  // 🎯 新增：频道切换提示
   bool _showChannelInfo = false;
   Timer? _hideChannelInfoTimer;
+
+  // 🎯 新增: 监控视频健康状态
+  Timer? _healthCheckTimer;
+  int _lastVideoFrameCount = 0;
+  int _frozenFrameCount = 0;
+  static const int _maxFrozenFrames = 3; // 连续3次检测到画面静止就重新加载
 
   @override
   void initState() {
@@ -61,7 +63,6 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   void _initializePlayer() {
-    // 优先使用预览控制器
     if (widget.previewController != null &&
         widget.previewController!.value.isInitialized) {
 
@@ -72,92 +73,58 @@ class _PlayerPageState extends State<PlayerPage> {
         _isLoading = false;
       });
 
-      // 创建 Chewie 控制器
       _createChewieController();
+      _startHealthCheck(); // 🎯 启动健康检查
 
-      debugPrint("✅ 播放页面：使用预览控制器 + Chewie");
+      debugPrint("✅ 播放页面:使用预览控制器 + Chewie");
       return;
     }
 
-    // 创建新控制器
-    debugPrint("⚠️ 播放页面：预览控制器不可用，创建新控制器");
+    debugPrint("⚠️ 播放页面:预览控制器不可用,创建新控制器");
     _isUsingPreviewController = false;
     _retryCount = 0;
 
     _attemptInitialize();
   }
 
-  /// 创建 Chewie 控制器
   void _createChewieController() {
     if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) {
-      debugPrint("⚠️ VideoPlayerController 未初始化，无法创建 Chewie");
+      debugPrint("⚠️ VideoPlayerController 未初始化,无法创建 Chewie");
       return;
     }
 
     try {
-      // 先暂停，将播放控制权交给 Chewie，避免音画不同步
       _videoPlayerController!.pause();
 
       _chewieController = ChewieController(
         videoPlayerController: _videoPlayerController!,
-
-        // 🎯 播放器配置
         autoPlay: true,
         looping: false,
-
-        // 🎯 UI 配置
         showControls: true,
         showControlsOnInitialize: false,
         controlsSafeAreaMinimum: const EdgeInsets.all(8),
-
-        // 🎯 全屏配置
-        allowFullScreen: false, // 已经是全屏页面，禁用 Chewie 的全屏按钮
+        allowFullScreen: false,
         allowMuting: true,
         allowPlaybackSpeedChanging: false,
-
-        // 🎯 宽高比
         aspectRatio: 16 / 9,
-
-        // 🎯 错误构建器
         errorBuilder: (context, errorMessage) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(
-                  Icons.error_outline,
-                  color: Colors.red,
-                  size: 64,
-                ),
+                const Icon(Icons.error_outline, color: Colors.red, size: 64),
                 const SizedBox(height: 16),
-                Text(
-                  '播放错误',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                Text('播放错误', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
-                Text(
-                  errorMessage,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.red),
-                ),
+                Text(errorMessage, textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
               ],
             ),
           );
         },
-
-        // 🎯 占位符构建器
         placeholder: Container(
           color: Colors.black,
-          child: const Center(
-            child: CircularProgressIndicator(),
-          ),
+          child: const Center(child: CircularProgressIndicator()),
         ),
-
-        // 🎯 材质进度条颜色
         materialProgressColors: ChewieProgressColors(
           playedColor: Colors.blue,
           handleColor: Colors.blueAccent,
@@ -166,10 +133,9 @@ class _PlayerPageState extends State<PlayerPage> {
         ),
       );
 
-      // 🎯 关键：确保音量正常
       _videoPlayerController!.setVolume(1.0);
 
-      debugPrint("✅ Chewie 控制器创建完成，将自动播放");
+      debugPrint("✅ Chewie 控制器创建完成");
 
     } catch (e) {
       debugPrint("❌ 创建 Chewie 控制器失败: $e");
@@ -181,24 +147,30 @@ class _PlayerPageState extends State<PlayerPage> {
 
   void _attemptInitialize() {
     if (_retryCount > 0) {
-      debugPrint("🔄 播放页面：第 $_retryCount 次重试 ${_currentChannel.name}");
+      debugPrint("🔄 播放页面:第 $_retryCount 次重试 ${_currentChannel.name}");
     } else {
-      debugPrint("🚀 播放页面：开始初始化 ${_currentChannel.name}");
+      debugPrint("🚀 播放页面:开始初始化 ${_currentChannel.name}");
     }
 
     setState(() {
       _isLoading = true;
       _errorMessage = _retryCount > 0
-          ? "连接失败，正在重试 ($_retryCount/$_maxRetries)..."
+          ? "连接失败,正在重试 ($_retryCount/$_maxRetries)..."
           : null;
     });
 
+    // 🎯 优化: 使用更好的 VideoPlayerOptions
     _videoPlayerController = VideoPlayerController.networkUrl(
       Uri.parse(_currentChannel.url),
       videoPlayerOptions: VideoPlayerOptions(
-        mixWithOthers: false, // 独占音频会话
+        mixWithOthers: true, // ✅ 改为 true,允许与其他音频混合
         allowBackgroundPlayback: false,
       ),
+      // 🎯 新增: HTTP 请求头,某些直播源需要
+      httpHeaders: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36',
+        'Connection': 'keep-alive',
+      },
     );
 
     _videoPlayerController!.initialize().then((_) {
@@ -212,15 +184,124 @@ class _PlayerPageState extends State<PlayerPage> {
         _errorMessage = null;
       });
 
-      // 创建 Chewie 控制器
       _createChewieController();
+      _startHealthCheck(); // 🎯 启动健康检查
 
-      debugPrint("✅ 播放页面：初始化成功 ${_currentChannel.name}");
+      debugPrint("✅ 播放页面:初始化成功 ${_currentChannel.name}");
     }).catchError((error) {
       if (!mounted) return;
 
-      debugPrint("❌ 播放页面：初始化失败 ${_currentChannel.name}: $error");
+      debugPrint("❌ 播放页面:初始化失败 ${_currentChannel.name}: $error");
       _handleInitializationFailure();
+    });
+  }
+
+  // 🎯 新增: 视频健康检查(检测画面是否静止)
+  void _startHealthCheck() {
+    _stopHealthCheck();
+
+    _healthCheckTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (!mounted || _videoPlayerController == null || !_videoPlayerController!.value.isInitialized) {
+        timer.cancel();
+        return;
+      }
+
+      // 检查视频是否在播放
+      if (!_videoPlayerController!.value.isPlaying) {
+        _frozenFrameCount = 0;
+        return;
+      }
+
+      // 🎯 关键检测: 检查视频位置是否在变化
+      final currentPosition = _videoPlayerController!.value.position.inMilliseconds;
+
+      // 如果位置没有变化(画面可能静止了)
+      if (currentPosition == _lastVideoFrameCount && currentPosition > 0) {
+        _frozenFrameCount++;
+        debugPrint("⚠️ 检测到画面可能静止 (计数: $_frozenFrameCount/$_maxFrozenFrames)");
+
+        if (_frozenFrameCount >= _maxFrozenFrames) {
+          debugPrint("❌ 画面静止超过阈值,尝试重新加载");
+          _handleFrozenVideo();
+        }
+      } else {
+        // 画面正常,重置计数
+        if (_frozenFrameCount > 0) {
+          debugPrint("✅ 画面恢复正常");
+        }
+        _frozenFrameCount = 0;
+        _lastVideoFrameCount = currentPosition;
+      }
+    });
+  }
+
+  void _stopHealthCheck() {
+    _healthCheckTimer?.cancel();
+    _healthCheckTimer = null;
+    _frozenFrameCount = 0;
+    _lastVideoFrameCount = 0;
+  }
+
+  // 🎯 新增: 处理画面静止的情况
+  void _handleFrozenVideo() {
+    debugPrint("🔄 尝试修复画面静止问题...");
+
+    _stopHealthCheck();
+    _frozenFrameCount = 0;
+
+    if (_videoPlayerController != null && _videoPlayerController!.value.isInitialized) {
+      // 方法1: 先尝试暂停再播放(轻量级修复)
+      try {
+        final currentPosition = _videoPlayerController!.value.position;
+        _videoPlayerController!.pause();
+
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted && _videoPlayerController != null) {
+            _videoPlayerController!.seekTo(currentPosition);
+            _videoPlayerController!.play();
+            _startHealthCheck();
+            debugPrint("✅ 尝试通过暂停/播放修复画面");
+          }
+        });
+      } catch (e) {
+        debugPrint("⚠️ 暂停/播放修复失败: $e,尝试完全重新加载");
+        _forceReloadVideo();
+      }
+    } else {
+      _forceReloadVideo();
+    }
+  }
+
+  // 🎯 新增: 强制重新加载视频
+  void _forceReloadVideo() {
+    debugPrint("🔄 强制重新加载视频...");
+
+    _showToast("视频异常,正在重新加载...");
+
+    // 释放 Chewie
+    try {
+      _chewieController?.dispose();
+      _chewieController = null;
+    } catch (e) {
+      debugPrint("⚠️ 释放 Chewie 失败: $e");
+    }
+
+    // 释放 VideoPlayer
+    try {
+      _videoPlayerController?.dispose();
+      _videoPlayerController = null;
+    } catch (e) {
+      debugPrint("⚠️ 释放 VideoPlayer 失败: $e");
+    }
+
+    _retryCount = 0;
+    _isUsingPreviewController = false;
+
+    // 延迟后重新初始化
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _attemptInitialize();
+      }
     });
   }
 
@@ -230,47 +311,46 @@ class _PlayerPageState extends State<PlayerPage> {
 
       setState(() {
         _isLoading = true;
-        _errorMessage = "连接失败，正在重试 ($_retryCount/$_maxRetries)...";
+        _errorMessage = "连接失败,正在重试 ($_retryCount/$_maxRetries)...";
       });
 
-      debugPrint("🔄 播放页面：准备第 $_retryCount 次重试，等待 ${_retryDelay.inSeconds} 秒");
+      debugPrint("🔄 播放页面:准备第 $_retryCount 次重试,等待 ${_retryDelay.inSeconds} 秒");
 
       _retryTimer?.cancel();
       _retryTimer = Timer(_retryDelay, () {
         if (!mounted) {
-          debugPrint("⚠️ 播放页面：重试取消（页面已卸载）");
+          debugPrint("⚠️ 播放页面:重试取消(页面已卸载)");
           return;
         }
 
-        debugPrint("🔄  播放页面：开始第 $_retryCount 次重试");
+        debugPrint("🔄  播放页面:开始第 $_retryCount 次重试");
 
         try {
           _videoPlayerController?.dispose();
         } catch (e) {
-          debugPrint('⚠️ 播放页面：释放旧控制器失败: $e');
+          debugPrint('⚠️ 播放页面:释放旧控制器失败: $e');
         }
 
         _attemptInitialize();
       });
     } else {
-      debugPrint("❌ 播放页面：已达到最大重试次数 ($_maxRetries)");
+      debugPrint("❌ 播放页面:已达到最大重试次数 ($_maxRetries)");
 
       setState(() {
         _isLoading = false;
-        _errorMessage = "连接失败（已重试 $_maxRetries 次）";
+        _errorMessage = "连接失败(已重试 $_maxRetries 次)";
       });
     }
   }
 
-  // 🎯 新增：切换到上一个频道
   void _switchToPreviousChannel() {
     if (_isSwitching) {
-      debugPrint("⚠️ 播放页面：正在切换频道，忽略操作");
+      debugPrint("⚠️ 播放页面:正在切换频道,忽略操作");
       return;
     }
 
     if (_currentIndex <= 0) {
-      debugPrint("⚠️ 播放页面：已经是第一个频道");
+      debugPrint("⚠️ 播放页面:已经是第一个频道");
       _showToast("已经是第一个频道");
       return;
     }
@@ -279,15 +359,14 @@ class _PlayerPageState extends State<PlayerPage> {
     _switchToChannel(_currentIndex);
   }
 
-  // 🎯 新增：切换到下一个频道
   void _switchToNextChannel() {
     if (_isSwitching) {
-      debugPrint("⚠️ 播放页面：正在切换频道，忽略操作");
+      debugPrint("⚠️ 播放页面:正在切换频道,忽略操作");
       return;
     }
 
     if (_currentIndex >= widget.channels.length - 1) {
-      debugPrint("⚠️ 播放页面：已经是最后一个频道");
+      debugPrint("⚠️ 播放页面:已经是最后一个频道");
       _showToast("已经是最后一个频道");
       return;
     }
@@ -296,25 +375,22 @@ class _PlayerPageState extends State<PlayerPage> {
     _switchToChannel(_currentIndex);
   }
 
-  // 🎯 新增：切换频道的核心逻辑（带节流）
   void _switchToChannel(int newIndex) {
     if (newIndex < 0 || newIndex >= widget.channels.length) {
-      debugPrint("⚠️ 播放页面：索引越界 $newIndex");
+      debugPrint("⚠️ 播放页面:索引越界 $newIndex");
       return;
     }
 
     final newChannel = widget.channels[newIndex];
 
-    // 🎯 节流控制：取消之前的切换定时器
     _switchChannelThrottle?.cancel();
+    _stopHealthCheck(); // 🎯 停止健康检查
 
-    // 🎯 显示频道信息
     setState(() {
       _showChannelInfo = true;
       _currentChannel = newChannel;
     });
 
-    // 🎯 自动隐藏频道信息
     _hideChannelInfoTimer?.cancel();
     _hideChannelInfoTimer = Timer(const Duration(seconds: 3), () {
       if (mounted) {
@@ -324,17 +400,15 @@ class _PlayerPageState extends State<PlayerPage> {
       }
     });
 
-    debugPrint("🔄 播放页面：准备切换到 ${newChannel.name} (索引: $newIndex)");
+    debugPrint("🔄 播放页面:准备切换到 ${newChannel.name} (索引: $newIndex)");
 
-    // 🎯 节流：延迟执行切换
     _switchChannelThrottle = Timer(_switchChannelDelay, () {
       if (!mounted) return;
 
-      debugPrint("✅ 播放页面：开始切换频道到 ${newChannel.name}");
+      debugPrint("✅ 播放页面:开始切换频道到 ${newChannel.name}");
 
       _isSwitching = true;
 
-      // 释放旧的 Chewie 控制器
       try {
         _chewieController?.pause();
         _chewieController?.dispose();
@@ -343,7 +417,6 @@ class _PlayerPageState extends State<PlayerPage> {
         debugPrint("⚠️ 释放 Chewie 控制器失败: $e");
       }
 
-      // 释放旧的 VideoPlayer 控制器
       try {
         _videoPlayerController?.dispose();
         _videoPlayerController = null;
@@ -351,18 +424,15 @@ class _PlayerPageState extends State<PlayerPage> {
         debugPrint('⚠️ 释放 VideoPlayer 控制器失败: $e');
       }
 
-      // 重置状态
       _retryCount = 0;
       _isUsingPreviewController = false;
 
-      // 初始化新频道
       _attemptInitialize();
 
       _isSwitching = false;
     });
   }
 
-  // 🎯 新增：显示提示消息
   void _showToast(String message) {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -380,13 +450,11 @@ class _PlayerPageState extends State<PlayerPage> {
     _retryTimer?.cancel();
     _switchChannelThrottle?.cancel();
     _hideChannelInfoTimer?.cancel();
+    _stopHealthCheck(); // 🎯 停止健康检查
 
-    // 🎯 先释放 Chewie 控制器
     _chewieController?.dispose();
 
-    // 🎯 不要立即释放 VideoPlayerController
-    // 因为要返回给预览页面
-    debugPrint("✅ 播放页面：保留 VideoPlayerController，准备返回");
+    debugPrint("✅ 播放页面:保留 VideoPlayerController,准备返回");
 
     super.dispose();
   }
@@ -403,9 +471,10 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_videoPlayerController != null &&
         _videoPlayerController!.value.isInitialized) {
 
-      debugPrint("✅ 播放页面：准备返回控制器");
+      debugPrint("✅ 播放页面:准备返回控制器");
 
-      // 🎯 先释放 Chewie 控制器
+      _stopHealthCheck(); // 🎯 停止健康检查
+
       try {
         _chewieController?.pause();
         _chewieController?.dispose();
@@ -414,7 +483,6 @@ class _PlayerPageState extends State<PlayerPage> {
         debugPrint("⚠️ 释放 Chewie 控制器失败: $e");
       }
 
-      // 🎯 暂停并降低音量
       try {
         _videoPlayerController!.pause();
         _videoPlayerController!.setVolume(0.5);
@@ -436,10 +504,10 @@ class _PlayerPageState extends State<PlayerPage> {
     _retryTimer?.cancel();
     _switchChannelThrottle?.cancel();
     _hideChannelInfoTimer?.cancel();
+    _stopHealthCheck(); // 🎯 停止健康检查
 
     final controller = _prepareControllerForReturn();
 
-    // 🎯 返回控制器和当前频道信息
     Navigator.of(context).pop({
       'controller': controller,
       'lastChannel': _currentChannel,
@@ -448,8 +516,8 @@ class _PlayerPageState extends State<PlayerPage> {
 
   void _manualRetry() {
     _retryCount = 0;
+    _stopHealthCheck(); // 🎯 停止健康检查
 
-    // 先释放 Chewie
     try {
       _chewieController?.dispose();
       _chewieController = null;
@@ -457,7 +525,6 @@ class _PlayerPageState extends State<PlayerPage> {
       debugPrint('⚠️ 释放 Chewie 控制器失败: $e');
     }
 
-    // 再释放 VideoPlayer
     try {
       _videoPlayerController?.dispose();
       _videoPlayerController = null;
@@ -481,9 +548,10 @@ class _PlayerPageState extends State<PlayerPage> {
       },
       child: Shortcuts(
         shortcuts: <LogicalKeySet, Intent>{
-          // 🎯 新增：上下键切换频道
           LogicalKeySet(LogicalKeyboardKey.arrowUp): const _PreviousChannelIntent(),
           LogicalKeySet(LogicalKeyboardKey.arrowDown): const _NextChannelIntent(),
+          // 🎯 新增: R键强制重新加载(调试用)
+          LogicalKeySet(LogicalKeyboardKey.keyR): const _ForceReloadIntent(),
         },
         child: Actions(
           actions: <Type, Action<Intent>>{
@@ -499,6 +567,12 @@ class _PlayerPageState extends State<PlayerPage> {
                 return null;
               },
             ),
+            _ForceReloadIntent: CallbackAction<_ForceReloadIntent>(
+              onInvoke: (_) {
+                _forceReloadVideo();
+                return null;
+              },
+            ),
           },
           child: Focus(
             autofocus: true,
@@ -506,7 +580,6 @@ class _PlayerPageState extends State<PlayerPage> {
               backgroundColor: Colors.black,
               body: Stack(
                 children: [
-                  // 🎯 Chewie 播放器
                   Center(
                     child: _isLoading
                         ? Column(
@@ -602,7 +675,6 @@ class _PlayerPageState extends State<PlayerPage> {
                     ),
                   ),
 
-                  // 🎯 新增：频道信息提示（切换时显示）
                   if (_showChannelInfo)
                     Positioned(
                       top: 40,
@@ -667,11 +739,15 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 }
 
-// 🎯 新增：Intent 定义
 class _PreviousChannelIntent extends Intent {
   const _PreviousChannelIntent();
 }
 
 class _NextChannelIntent extends Intent {
   const _NextChannelIntent();
+}
+
+// 🎯 新增
+class _ForceReloadIntent extends Intent {
+  const _ForceReloadIntent();
 }
